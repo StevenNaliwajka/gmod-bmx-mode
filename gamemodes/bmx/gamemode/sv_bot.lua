@@ -10,6 +10,7 @@
 
         bmx_bot_name   "Peter Griffin"   what the bot is called
         bmx_bot_model  ""                its player model; empty keeps the default
+        bmx_bot_auto   0                 keep this many riding while someone is on
 
     THE MODEL IS NOT IN THIS ADDON. The addon is public and ships no content
     that is not its own (README, "Licence and content"). A server that wants
@@ -1665,14 +1666,17 @@ concommand.Add("bmx_bot_spawn", function(ply, _, args)
     if IsValid(ply) then ply:ChatPrint(msg) else print(msg) end
 end)
 
+-- A bot rider gone: its brain, the bot player and the bike it was given.
+function Bot.Remove(b)
+    local p, bike = b.ply, b.bike
+    Bot.Detach(b)
+    if IsValid(p) and p:IsBot() then p:Kick("BMX bot removed") end
+    if IsValid(bike) and bike.BMXBotBike then SafeRemoveEntity(bike) end
+end
+
 concommand.Add("bmx_bot_remove", function(ply)
     if not allowed(ply) then return end
-    for p, b in pairs(Bot.brains) do
-        local bike = b.bike
-        Bot.Detach(b)
-        if IsValid(p) and p:IsBot() then p:Kick("BMX bot removed") end
-        if IsValid(bike) and bike.BMXBotBike then SafeRemoveEntity(bike) end
-    end
+    for _, b in pairs(Bot.brains) do Bot.Remove(b) end
 end)
 
 concommand.Add("bmx_bot_trick", function(ply, _, args)
@@ -1706,3 +1710,42 @@ concommand.Add("bmx_bot_status", function(ply)
         end
     end
 end)
+
+--------------------------------------------------------------------------
+-- bmx_bot_auto N: the server keeps N bot riders doing the show, for a server
+-- that wants Peter riding around whenever somebody is there to watch. Only
+-- the riders it spawned itself are counted or removed (bmx_bot_spawn's are
+-- an admin's), none ride on an empty server, and one player slot is always
+-- left free so a bot never keeps a person out.
+--------------------------------------------------------------------------
+local cvAuto = CreateConVar("bmx_bot_auto", "0", FCVAR_ARCHIVE,
+    "BMX: keep this many bot riders doing tricks while a player is on (0 = only bmx_bot_spawn)")
+
+local function spawnPoint()
+    local spots = ents.FindByClass("info_player_start")
+    if #spots == 0 then return Vector(0, 0, 0), 0 end
+    local s = spots[math.random(#spots)]
+    return s:GetPos(), s:GetAngles().y
+end
+
+function Bot.AutoThink()
+    local humans, auto = 0, {}
+    for _, p in ipairs(player.GetAll()) do
+        if not p:IsBot() then
+            humans = humans + 1
+        elseif p.BMXBotAuto and p.BMXBotBrain then
+            auto[#auto + 1] = p.BMXBotBrain
+        end
+    end
+    local want = math.max(0, cvAuto:GetInt())
+    if humans == 0 then want = 0 end
+    want = math.min(want, math.max(0, game.MaxPlayers() - (#player.GetAll() - #auto) - 1))
+    for i = #auto, want + 1, -1 do Bot.Remove(auto[i]) end
+    for _ = #auto + 1, want do
+        local at, yaw = spawnPoint()
+        local b = Bot.Spawn(at, yaw)
+        if not b then break end
+        b.ply.BMXBotAuto = true
+    end
+end
+timer.Create("BMX.Bot.Auto", 5, 0, Bot.AutoThink)

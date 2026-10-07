@@ -80,6 +80,12 @@ bmx_bot_status                        what each bot has tried and landed
 bmx_bot_remove                        every bot rider gone, with its bikes and ramps
 ```
 
+`bmx_bot_auto 1` (server config) keeps one riding the whole time, with no
+admin needed: the server spawns it at a spawn point whenever a player is on,
+puts it back if it is removed, takes it away when the last player leaves, and
+never lets it take the last free player slot. Only the riders it spawned
+itself are counted, so an admin's `bmx_bot_spawn` bots are left alone.
+
 It works through Bunny Hop, Wheelie, Stoppie, Combo, Backflip, Frontflip,
 Barrel Roll, 360, Crank Grind and Double Peg Grind (plus the style tricks in
 the trick registry), announces each landing in chat, and gets back on after a
