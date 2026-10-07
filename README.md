@@ -10,6 +10,17 @@ server plays:
   sign (`bmx_scores`, `bmx_leaderboard_set`).
 - **The trick bot**: `bmx_bot_spawn`, Peter Griffin by default.
 
+## Official server
+
+**Petopia**, Peter Griffin's Garry's Mod server, is the official BMX server:
+
+    connect gmod.naliwajka.com:27015
+
+Paste that into the Garry's Mod console (~), or find "Petopia" in the server
+browser. Type `/vote bmx` in chat to switch it to BMX.
+
+Found a bug or have an idea? [Open an issue on GitHub](https://github.com/StevenNaliwajka/gmod-bmx-mode/issues).
+
 ## The three pieces
 
 | Piece | Repository | What it is |
