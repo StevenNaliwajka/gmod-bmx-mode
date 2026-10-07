@@ -56,7 +56,7 @@ M.Config = {
     deckMin     = 96,    -- u of flat top past the lip to come down on
     rollMax     = 420,   -- u past the deck within which it is back on the floor
     dropMax     = 14,    -- u: a bigger single step down past the deck is a drop, not a roll-off
-    runup       = 480,   -- u of flat clear ground before the foot (the run starts 150 u inside it)
+    runup       = 400,   -- u of flat clear ground before the foot (the run starts up to 150 u inside it)
     runWide     = 30,    -- u clear either side of the run-up's line
     minWidth    = 64,    -- u across a face
     airGuess    = 0.85,  -- s of air off a face before one has been flown
@@ -83,6 +83,11 @@ M.Config = {
     grindOn     = 160,   -- u of clear edge wanted after the landing point (the short
                          -- beds along the south wall are 240-360 u long)
     grindPrestage = 220, -- u further back along the run line it comes to the start from
+    -- { closing angle deg, run-up u[, run-in to the start u] } tried in turn:
+    -- the long shallow run first, the short steep ones (a planting bed in a
+    -- lane between ramps, come at from the open floor) last. Up to 40 deg
+    -- the grind takes.
+    grindWays   = { { 9, 720 }, { 9, 560 }, { 18, 480 }, { 28, 450 }, { 34, 340, 100 }, { 38, 300, 80 } },
     budget      = 0.004, -- s of a tick the scan may use
 }
 
@@ -565,7 +570,9 @@ function Bot.mapPerformWrap(b, name, done)
             if b.grindMissLat and math.abs(b.grindMissLat) < 30 then
                 local C = M.Config
                 local k = ok and C.ledgeKeep or C.ledgeLearn
-                s.bias = math.Clamp((s.bias or 0) - b.grindMissLat * k, -C.ledgeBiasMax, C.ledgeBiasMax)
+                -- lat is measured to the left: toward the top is +hand.
+                local hand = b.mapLedgeHand or 1
+                s.bias = math.Clamp((s.bias or 0) - hand * b.grindMissLat * k, -C.ledgeBiasMax, C.ledgeBiasMax)
             end
             b.mapLedgeKey = nil
         end
@@ -577,42 +584,58 @@ Bot.Perform = Bot.mapPerformWrap
 --------------------------------------------------------------------------
 -- A ledge to grind, as the rail table Brain:grindRun rides (sv_bot.lua).
 --------------------------------------------------------------------------
+-- A ledge ridden one way or the other learns its aim apart.
+function M.LedgeKey(l, rev) return rev and (l.key .. "r") or l.key end
+
 -- How far along `l` from `x` the edge is clear for the bike beside it.
-local function clearAlong(l, x, want)
-    local start = l.a + l.dir * x - l.side * 10 + UP * 4
-    local tr = util.TraceHull({ start = start, endpos = start + l.dir * want,
+local function clearAlong(l, x, want, rev)
+    local dir = rev and -l.dir or l.dir
+    local start = (rev and l.b or l.a) + dir * x - l.side * 10 + UP * 4
+    local tr = util.TraceHull({ start = start, endpos = start + dir * want,
         mins = Vector(-4, -4, 0), maxs = Vector(4, 4, 36), mask = MASK_SOLID, filter = traceFilter })
     if tr.StartSolid then return 0 end
     return tr.Fraction * want
 end
 
 -- The approach to land `x` u along ledge `l`: the rail table, or nil.
-function M.LedgeRun(l, x, cfg, C)
+-- `x` u along the ledge from the end it is ridden from; `rev` rides it the
+-- other way (the top on the right); `yawDeg` how steeply the run closes on it.
+function M.LedgeRun(l, x, cfg, C, runup, yawDeg, rev, prestage)
     C = C or M.Config
-    local dir, side = l.dir, l.side
+    runup = runup or C.grindRunup
+    local side = l.side
+    local dir = rev and -l.dir or l.dir
+    local a = rev and l.b or l.a
+    -- +1: the top is on the left of the way it is ridden; -1: on the right.
+    local hand = Vector(-dir.y, dir.x, 0):Dot(side) > 0 and 1 or -1
+    local key = M.LedgeKey(l, rev)
     -- Aimed past where it last came down by what it missed by: the hop and
     -- the landing push the bike sideways by a few units a ledge, not the same
     -- on every one (-9 u on one bed's kerb, +4 on another's).
-    local onTop = C.ledgeLand + (l.key and M.Stat(l.key).bias or 0)
-    local yaw = C.grindYaw
-    local c, s = math.cos(math.rad(yaw)), math.sin(math.rad(yaw))
+    local onTop = C.ledgeLand + (l.key and M.Stat(key).bias or 0)
+    local ya = yawDeg or C.grindYaw
+    local yaw = ya * hand
+    local c, s = math.cos(math.rad(ya)), math.sin(math.rad(ya))
     local rideDir = dir * c + side * s
-    local landAt = l.a + dir * x + side * onTop
+    local landAt = a + dir * x + side * onTop
     -- The rail table grindRun takes: a stretch starting 60 u before landAt.
     local len = l.len - (x - 60)
     if len < 120 then return nil end
-    local centre = l.a + dir * ((x - 60) + len * 0.5)
+    local centre = a + dir * ((x - 60) + len * 0.5)
     centre = Vector(centre.x, centre.y, l.ground)
-    local g = { centre = centre, dir = dir, len = len, lateral = onTop, top = l.top - l.ground,
+    local g = { centre = centre, dir = dir, len = len, lateral = onTop * hand, top = l.top - l.ground,
                 topZ = l.top, width = 88, yaw = yaw, tol = C.ledgeTol, what = "ledge", side = side,
                 steerPreload = true }
     -- Where the run starts: back along the run line from the landing, on the floor.
-    local stage = Vector(landAt.x, landAt.y, l.ground) - rideDir * C.grindRunup
+    local stage = Vector(landAt.x, landAt.y, l.ground) - rideDir * runup
+    g.runup = runup
+    g.hand, g.key = hand, key
     g.stage = stage
     -- Come to the start along the run line, from further back on it: arriving
     -- from anywhere, the bike had to turn round right beside the kerb, and
     -- could not.
-    g.prestage = stage - rideDir * C.grindPrestage
+    g.prestageLen = prestage or C.grindPrestage
+    g.prestage = stage - rideDir * g.prestageLen
     g.landAt = landAt
     return g, rideDir
 end
@@ -624,12 +647,13 @@ function M.LedgeRunClear(l, g, rideDir, C)
     local stage = g.stage
     local sz = M.Ground(stage.x, stage.y, l.ground + 8, l.ground - 8)
     if not sz or abs(sz - l.ground) > 3 then return false, "no floor at the start" end
-    local need = C.grindRunup - 120
+    local need = (g.runup or C.grindRunup) - 120
     local run = BMX.Launch.Runway(Vector(stage.x, stage.y, sz) + UP * 4, rideDir, need, { filter = traceFilter })
     if run < need - 20 then return false, string.format("run blocked at %.0f u", run) end
     -- Room behind the start to come into it along the line.
-    local back = BMX.Launch.Runway(Vector(stage.x, stage.y, sz) + UP * 4, -rideDir, C.grindPrestage + 60, { filter = traceFilter })
-    if back < C.grindPrestage + 40 then return false, "no room behind the start" end
+    local pre = g.prestageLen or C.grindPrestage
+    local back = BMX.Launch.Runway(Vector(stage.x, stage.y, sz) + UP * 4, -rideDir, pre + 60, { filter = traceFilter })
+    if back < pre + 40 then return false, "no room behind the start" end
     return true
 end
 
@@ -641,28 +665,40 @@ function Brain:mapRail(name)
     local cfg = self.bike:Cfg()
     local cands = {}
     for _, l in ipairs(cat.ledges) do
-        local s = M.Stat(l.key)
-        if s.missed <= s.landed + 2 then
-            -- Landing points along it, the first that has a clear run and a clear grind.
-            for x = 80, l.len - C.grindOn, 140 do
-                local g, rideDir = M.LedgeRun(l, x, cfg, C)
-                if g and clearAlong(l, x, C.grindOn) >= C.grindOn * 0.9 then
-                    local ok = M.LedgeRunClear(l, g, rideDir, C)
-                    if ok then
-                        cands[#cands + 1] = { key = l.key, ledge = l, g = g, at = g.stage }
-                        break
+        -- Each way along it, each its own spot with its own record.
+        for _, rev in ipairs({ false, true }) do
+            local key = M.LedgeKey(l, rev)
+            local s = M.Stat(key)
+            if s.missed <= s.landed + 2 then
+                -- The first landing point with a clear run and a clear grind:
+                -- the long shallow run where it fits; a shorter, steeper one
+                -- (a short bed in a lane between ramps, come at from the open
+                -- floor) where it does not. The grind takes up to 40 degrees.
+                local found = false
+                for _, way in ipairs(C.grindWays) do
+                    for x = 80, l.len - C.grindOn, 35 do
+                        local g, rideDir = M.LedgeRun(l, x, cfg, C, way[2], way[1], rev, way[3])
+                        if g and clearAlong(l, x, C.grindOn, rev) >= C.grindOn * 0.9 then
+                            if M.LedgeRunClear(l, g, rideDir, C) then
+                                cands[#cands + 1] = { key = key, ledge = l, g = g, at = g.stage }
+                                found = true
+                                break
+                            end
+                        end
                     end
+                    if found then break end
                 end
             end
+            tick()
         end
-        tick()
     end
     local it = pick(self, cands, function(c) return min(c.ledge.len, 800) * 0.2 end, function(c) return c.at end)
     if not it then return nil, (#cat.ledges > 0) and "no ledge with a clear run at it" or "no ledge on this map" end
     M.Stat(it.key).used = M.Stat(it.key).used + 1
     self.mapLedgeKey = it.key
-    self:say(string.format("map: a %.0f u ledge, %.0f u high, %.0f u long", it.ledge.top - it.ledge.ground,
-        it.ledge.top, it.ledge.len))
+    self.mapLedgeHand = it.g.hand
+    self:say(string.format("map: a %.0f u ledge, %.0f u high, %.0f u long, ridden with the top on the %s, closing at %.0f deg",
+        it.ledge.top - it.ledge.ground, it.ledge.top, it.ledge.len, it.g.hand > 0 and "left" or "right", math.abs(it.g.yaw)))
     return it.g
 end
 
@@ -813,9 +849,9 @@ concommand.Add("bmx_bot_map", function(ply)
             M.FaceAir(f), s.landed, s.landed + s.missed))
     end
     for _, l in ipairs(cat.ledges) do
-        local s = M.Stat(l.key)
-        reply(ply, string.format("  ledge (%.0f %.0f) to (%.0f %.0f), %.0f u high, %.0f long, %d/%d landed",
-            l.a.x, l.a.y, l.b.x, l.b.y, l.top - l.ground, l.len, s.landed, s.landed + s.missed))
+        local s, r = M.Stat(l.key), M.Stat(M.LedgeKey(l, true))
+        reply(ply, string.format("  ledge (%.0f %.0f) to (%.0f %.0f), %.0f u high, %.0f long, %d/%d landed one way, %d/%d the other",
+            l.a.x, l.a.y, l.b.x, l.b.y, l.top - l.ground, l.len, s.landed, s.landed + s.missed, r.landed, r.landed + r.missed))
     end
     local show = Bot.TrickListFor(nil)
     reply(ply, "  the show here: " .. table.concat(show, ", "))

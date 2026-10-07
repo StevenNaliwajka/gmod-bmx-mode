@@ -805,8 +805,10 @@ function Brain:hitLaunch(l, speed)
     -- Well inside the clear run, not at its end: a stage at the very end of
     -- one (14 u short of the next ramp) was overshot onto that ramp's slope,
     -- and one 86 u from a planting bed left no room to turn round in.
-    local back = math.min(Bot.Config.stageBack,
-        BMX.Launch.Runway(from, -l.dir, Bot.Config.stageBack, { filter = filter }) - 150)
+    -- (150 u inside where there is room for it; a short run keeps 300 u to
+    -- get up to speed and gives up the rest of the margin.)
+    local run = BMX.Launch.Runway(from, -l.dir, Bot.Config.stageBack, { filter = filter })
+    local back = math.min(Bot.Config.stageBack, run - math.min(150, math.max(run - 330, 30)))
     if back < 300 then return false, string.format("no room to ride at it (%.0f u)", back) end
     local stage = l.foot - l.dir * back
     self:say(string.format("riding to the start of the run, %.0f u away", (stage - self.bike:GetPos()):Length()))
@@ -1373,7 +1375,9 @@ function Brain:grindRun(name, g)
             local d = landAt - here
             d.z = 0
             local sideAng = math.deg(math.atan2(d:Dot(Vector(-dir.y, dir.x, 0)), d:Dot(dir)))
-            if sideAng >= 2 and sideAng <= 20 then
+            -- (The same side as planned, and no steeper than the grind takes.)
+            local want = g.yaw or GRIND_YAW
+            if sideAng * (want >= 0 and 1 or -1) >= 2 and math.abs(sideAng) <= math.max(20, math.abs(want) + 8) then
                 press, rideDir, flight, tCharge, tDown, kick = Bot.GrindApproach(cfg, centre, dir, railLen, lateral,
                     g.top, physenv.GetGravity():Length(), sideAng)
             end
@@ -1527,7 +1531,9 @@ function Brain:grindRun(name, g)
             b:waitLanded(0.2, 2)
             local away = (dir - g.side * 0.45):GetNormalized()
             local from = b.bike:GetPos()
-            b:rideLine(from, away, 120, function(along) return along > 140 end, 3)
+            -- ...and stopping short of whatever is there (off the east bed it
+            -- curved into the north bed's corner).
+            b:rideLine(from, away, 120, function(along) return along > 140 or b:blockedAhead(40 + b:speed() * 0.4) end, 3)
         end
         b:waitLanded(0.6, 3)
         if b:scoredSince(t0, name) and b:riding() then return true end
