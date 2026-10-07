@@ -25,9 +25,9 @@ Found a bug or have an idea? [Open an issue on GitHub](https://github.com/Steven
 
 | Piece | Repository | What it is |
 |---|---|---|
-| **BMX** | root/gmod-bmx | The vehicle mod (Workshop 3814420080). Bikes, physics, tricks, combos, park pieces, cameras, replays. Works on any gamemode. |
-| **BMX (Mode)** | root/gmod-bmx-mode (this) | The gamemode. |
-| **petopia_bmx_fall** | root/petopia_bmx_fall | The map: an original BSP of the park, plus its city. |
+| **BMX** | gmod/gmod-bmx | The vehicle mod (Workshop 3814420080). Bikes, physics, tricks, combos, park pieces, cameras, replays. Works on any gamemode. |
+| **BMX (Mode)** | gmod/gmod-bmx-mode (this) | The gamemode. |
+| **petopia_bmx_fall** | gmod/petopia_bmx_fall | The map: an original BSP of the park, plus its city. |
 
 This gamemode **needs the BMX addon** (1.1.0 or later) and uses only its
 public API: the `BMX_*` hooks, `BMX.Settings`, `BMX.AddPrivilege`,

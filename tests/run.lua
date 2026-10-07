@@ -24,7 +24,7 @@ local addon = os.getenv("BMX_ADDON")
 if not isAddon(addon) then addon = root .. "/../gmod-bmx" end
 if not isAddon(addon) then addon = here .. "/.addon" end
 if not isAddon(addon) then
-    io.stderr:write("no BMX addon checkout: set BMX_ADDON, or clone root/gmod-bmx next to this repository\n")
+    io.stderr:write("no BMX addon checkout: set BMX_ADDON, or clone gmod/gmod-bmx next to this repository\n")
     os.exit(2)
 end
 
