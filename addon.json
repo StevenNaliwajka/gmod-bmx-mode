@@ -1,0 +1,6 @@
+{
+    "title": "BMX (Mode)",
+    "type": "gamemode",
+    "tags": [ "fun", "build" ],
+    "ignore": [ ".git/*", "docs/*", "tests/*", "tools/*", "*.md", "LICENSE", ".gitignore" ]
+}

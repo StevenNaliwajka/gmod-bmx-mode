@@ -1,0 +1,8 @@
+"bmx"
+{
+	"base"		"sandbox"
+	"title"		"BMX (Mode)"
+	"category"	"other"
+	"menusystem"	"1"
+	"maps"		"^petopia_bmx_|^gm_skatepark"
+}
