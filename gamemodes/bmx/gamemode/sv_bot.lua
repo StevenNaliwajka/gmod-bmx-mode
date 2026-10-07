@@ -1403,7 +1403,7 @@ function Brain:nextInShow()
     local name = table.remove(self.queue or {}, 1)
     if not name then
         self.queue = {}
-        for _, n in ipairs(Bot.TrickList) do self.queue[#self.queue + 1] = n end
+        for _, n in ipairs(Bot.TrickListFor and Bot.TrickListFor(self.bike) or Bot.TrickList) do self.queue[#self.queue + 1] = n end
         name = table.remove(self.queue, 1)
     end
     Bot.Perform(self, name, function(ok)

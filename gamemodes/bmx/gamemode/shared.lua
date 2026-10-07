@@ -48,6 +48,7 @@ local SHARED = {
 local SERVER_FILES = {
     "sv_scores.lua",     -- personal bests + leaderboard; listens to the addon's public hooks
     "sv_bot.lua",        -- a bot rider that does tricks (bmx_bot_spawn)
+    "sv_board_bot.lua",  -- ...and its skateboard tricks (needs the addon's G23 skateboard; inert without it)
     "sv_games.lua",      -- SKATE, Trick Attack, Combo Mambo (loads games/*)
     "sv_test_cases.lua", -- the bot's cases for the addon's headless suite (bmx_test bot_*)
 }

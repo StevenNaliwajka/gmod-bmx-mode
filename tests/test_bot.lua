@@ -471,7 +471,7 @@ T.test("commands: bmx_bot_trick queues a trick by name; an unknown one lists the
     sv:command("bmx_bot_trick", a, "Barrel", "Roll")
     T.eq(brain.queue and brain.queue[1], "Barrel Roll", "queued first")
     a._chat = {}
-    sv:command("bmx_bot_trick", a, "Kickflip")
+    sv:command("bmx_bot_trick", a, "Nonsense Spin")
     T.ok(table.concat(a._chat, " "):find("Backflip", 1, true), "lists the tricks: " .. table.concat(a._chat, " "))
 end)
 

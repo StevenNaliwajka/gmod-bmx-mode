@@ -34,6 +34,7 @@ gamemodes/bmx/gamemode/sh_settings.lua      its rows in the addon's Options > BM
 gamemodes/bmx/gamemode/sv_games.lua         games/skate.lua, attack.lua, mambo.lua
 gamemodes/bmx/gamemode/sv_scores.lua        personal bests, saved to data/bmx/scores/<map>.json
 gamemodes/bmx/gamemode/sv_bot.lua           the trick bot
+gamemodes/bmx/gamemode/sv_board_bot.lua     ...its skateboard tricks (when the addon has the skateboard)
 gamemodes/bmx/gamemode/sv_test_cases.lua    the bot's cases in the addon's headless suite (bmx_test bot_*)
 gamemodes/bmx/gamemode/cl_games.lua, cl_scores.lua
 gamemodes/bmx/entities/entities/bmx_leaderboard/
