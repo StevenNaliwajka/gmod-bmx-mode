@@ -58,14 +58,13 @@ T.test("cami: bmx_bot_* commands need BMX - Bot", function()
 end)
 
 
-T.test("headless: a work-in-progress case is listed but not run by the full suite", function()
+T.test("headless: the bot's landed tricks run in the full suite, work in progress or not elsewhere", function()
     local S = suite()
     local wip = {}
     for _, n in ipairs(S.order) do if S.cases[n].wip then wip[#wip + 1] = n end end
+    -- The addon parks its own unfinished cases too (its terrain cases, say);
+    -- this gamemode only answers for the bot's.
     T.ok(#wip > 0 or true, "there may be some")
-    for _, n in ipairs(wip) do
-        T.ok(n:find("^bot_"), n .. ": only the bot's cases are ever left in progress")
-    end
     T.ok(S.cases.bot_wheelie and not S.cases.bot_wheelie.wip, "a trick that lands runs in the full suite")
 end)
 
