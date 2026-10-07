@@ -78,6 +78,7 @@ bmx_bot_spawn [stock|cruiser|mini]   a bot on a bike where you are looking
 bmx_bot_trick Backflip                every bot does that trick next
 bmx_bot_status                        what each bot has tried and landed
 bmx_bot_remove                        every bot rider gone, with its bikes and ramps
+bmx_bot_map                           the ramps and ledges it found on this map, and its show here
 ```
 
 `bmx_bot_auto 1` (server config) keeps one riding the whole time, with no
@@ -87,14 +88,28 @@ never lets it take the last free player slot. Only the riders it spawned
 itself are counted, so an admin's `bmx_bot_spawn` bots are left alone.
 
 It works through Bunny Hop, Wheelie, Stoppie, Combo, Backflip, Frontflip,
-Barrel Roll, 360, Crank Grind and Double Peg Grind (plus the style tricks in
-the trick registry), announces each landing in chat, and gets back on after a
-crash. It drives the bike exactly the way a player's keys do, and each trick
-counts only if the addon's own scoring pays it. For air it looks for a ramp in
-the map (any 12-40 degree slope that ends in a lip, with room before and
-after); with none it puts its own kicker down and takes it away afterwards.
+Barrel Roll, 360, Crank Grind, Double Peg Grind, Tailwhip, Barspin and the
+poses (Superman, No-Hander, Can-Can, X-Up, Tabletop, Turndown), announces each
+landing in chat, and gets back on after a crash. It drives the bike exactly the
+way a player's keys do, and each trick counts only if the addon's own scoring
+pays it.
+
+**It rides the map as it is.** By default the bot puts nothing down: it jumps
+the map's own ramps and grinds the map's own ledges. Once per map it looks the
+park over (`bmx_bot_map` lists what it found): ramp faces of 12-40 degrees that
+end in a deck to land on (a funbox's sides), with a straight run-up in front,
+and long ledges a bunny hop reaches (10-32 u high, like a planting bed's kerb).
+It takes them in turn, so the show goes round the whole park, and learns
+from each one: the air a ramp actually gives, and how far a ledge's hop came
+down to one side. **A trick the map has nothing for is left out of the show**
+rather than tried and missed: a funbox gives about 0.85 s of air, which is a
+whip, a bar spin or a pose but not a flip, a roll or a 360 (those need 1.1 s
+or more), and a crank grind needs a pipe a hop reaches. On petopia_bmx_fall
+that is thirteen tricks off eight funbox faces and seven kerbed beds.
+`bmx_bot_props 1` lets it put its own kicker or rail down where the map has
+none (and so do the whole list); it takes them away afterwards.
 Every trick is a case in the headless suite (`bmx_test bot_*`), ridden on a
-real server.
+real server (on gm_flatgrass, with its own kicker and rail).
 
 `bmx_bot_name` (default `Peter Griffin`) and `bmx_bot_model` name and dress
 it. **The model is not part of this addon**, which ships no content that is
@@ -109,8 +124,9 @@ at things: an A* path with the corners taken slow, replanned once if it gets
 stuck. It picks its ramps from every launch on the map, by height and angle,
 by how far they are on the mesh, by how recently it used them, and by what
 they have actually done for it -- a ramp it has missed off more often than it
-has landed off is dropped, and then it puts a kicker down on the best long
-runway the mesh knows instead. Flat tricks and rails get a catalogued runway
+has landed off is dropped (and with `bmx_bot_props 1` it then puts a kicker
+down on the best long runway the mesh knows instead). Its routes keep a bike's
+width off kerbs and pillars. Flat tricks and rails get a catalogued runway
 it can ride straight into, along the park's axes where it can.
 `bmx_bot_nav 0` turns all of this off.
 

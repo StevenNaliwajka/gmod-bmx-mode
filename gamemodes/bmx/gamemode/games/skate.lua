@@ -39,7 +39,20 @@ local TRY_TIME = 30        -- seconds each follower has
 
 -- What the bot may set: the tricks that are not a lottery on a bad map.
 local BOT_SETS = { "Backflip", "Frontflip", "Barrel Roll", "360", "Wheelie",
-                   "Stoppie", "Crank Grind", "Double Peg Grind" }
+                   "Stoppie", "Crank Grind", "Double Peg Grind", "Tailwhip", "Barspin" }
+
+-- What a bot sets: only what this map has something for (the bot rides the
+-- map as it is, sv_botmap.lua -- on a park of funboxes that is no flip).
+local function botSets(ply)
+    local Bot = BMX.Bot
+    local b = Bot and Bot.brains[ply]
+    if not (Bot and Bot.TrickListFor) then return BOT_SETS end
+    local here = {}
+    for _, n in ipairs(Bot.TrickListFor(b and b.bike)) do here[n] = true end
+    local out = {}
+    for _, n in ipairs(BOT_SETS) do if here[n] then out[#out + 1] = n end end
+    return #out > 0 and out or BOT_SETS
+end
 
 local function idOf(trick)
     return trick.id or string.lower(trick.name or "")
@@ -102,7 +115,8 @@ function M:StartSet(setter)
     self.msg = setter:Nick() .. " sets a trick"
     self:Say(self.msg)
     if setter.BMXGameBot and BMX.Bot then
-        drive(setter, BOT_SETS[math.random(#BOT_SETS)])
+        local sets = botSets(setter)
+        drive(setter, sets[math.random(#sets)])
     end
 end
 

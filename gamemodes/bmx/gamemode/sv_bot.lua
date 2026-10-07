@@ -11,6 +11,7 @@
         bmx_bot_name   "Peter Griffin"   what the bot is called
         bmx_bot_model  ""                its player model; empty keeps the default
         bmx_bot_auto   0                 keep this many riding while someone is on
+        bmx_bot_props  0                 1 lets it put its own kicker or rail down
 
     THE MODEL IS NOT IN THIS ADDON. The addon is public and ships no content
     that is not its own (README, "Licence and content"). A server that wants
@@ -27,8 +28,10 @@
     somewhere to do it, rides there, does it, and reports what the ADDON'S OWN
     SCORING said happened -- BMX_TricksLanded and BMX_ComboEnded -- rather than
     what the bot thinks it did. An air trick needs a launch: the bot looks for
-    a ramp in the world first (BMX.FindLaunch: a map's kicker, a funbox, a prop
-    somebody tilted) and only if there is none puts its own kicker down.
+    a ramp in the world (BMX.FindLaunch: a map's kicker, a funbox, a prop
+    somebody tilted; sv_botmap.lua: the map's ramp faces and ledges). It puts
+    its own kicker or rail down only when bmx_bot_props is 1: by default it
+    rides the map as it is, and a trick the map has nothing for is skipped.
 
     THE AIR CONTROLLER is the interesting part. A flip is scored as a full
     turn of the spin integral, and landed only if the wheels come down first;
@@ -46,6 +49,12 @@ local cvName  = CreateConVar("bmx_bot_name", "Peter Griffin", bit.bor(FCVAR_ARCH
     "BMX: what a bot rider spawned by bmx_bot_spawn is called.")
 local cvModel = CreateConVar("bmx_bot_model", "", bit.bor(FCVAR_ARCHIVE, FCVAR_REPLICATED),
     "BMX: player model for bot riders (empty = the default). The server must have it mounted.")
+-- THE MAP AS IT IS (owner's call, 2026-10-07): the bot does its tricks off
+-- what the map has -- its ramps, funboxes, ledges -- and never puts a kicker,
+-- a rail or a park piece down unless a server asks for that here.
+local cvProps = CreateConVar("bmx_bot_props", "0", FCVAR_ARCHIVE,
+    "BMX: 1 lets the trick bot put its own kicker, rail or park piece down where the map has none (0 = it only rides the map)")
+function Bot.PropsAllowed() return cvProps:GetBool() end
 
 local TAU = math.pi * 2
 local UP = Vector(0, 0, 1)
@@ -56,10 +65,17 @@ Bot.TrickList = { "Bunny Hop", "Wheelie", "Stoppie", "Combo", "Backflip",
                   "Tailwhip", "Barspin", "Superman", "Superman Backflip" }
 
 Bot.Config = {
-    -- The run at a launch is SPRINTED (Drive.sprintTorque / sprintCadence):
-    -- stopping at the start and pedalling up to 340 reached the lip well
-    -- short of it, and 1.06 s of air on a real server is not enough to flip.
-    flipSpeed  = 400,   -- u/s wanted at a launch's lip, for the air tricks
+    -- The run at a launch is SPRINTED (Drive.sprintTorque / sprintCadence).
+    -- The stock bike tops out about 310 u/s sprinting (measured on
+    -- petopia_bmx_fall, 2026-10-07); a target of 400 was never reached, so
+    -- the "too slow at the ramp" check fired at every ramp's foot and the
+    -- bot braked on the slope and fell over.
+    flipSpeed  = 330,   -- u/s asked for on the run at a launch (sprinting flat out)
+    -- A ramp's foot costs ~30 u/s in a tick; slower than this past it is a
+    -- stall. Only a real one is given up: the give-up brakes, and braking on
+    -- a funbox's slope at 216 u/s rolled the bike back and laid it down. A
+    -- slow jump is still a jump (too little air, and the trick is not begun).
+    launchMinSpeed = 120,
     stageBack  = 1100,  -- u behind a launch's foot where the run at it starts
     grindShift = 0,     -- u sideways a grind hop adds (it was not systematic: see the preload hold)
     roamRadius = 3000,  -- u out the bot looks for room to do a trick in
@@ -88,6 +104,12 @@ Bot.Config = {
     stuckMove  = 64,    -- u
     stuckFall  = 2000,  -- u below home: fell out of the world, reset at once
     outOfWorldTime = 1.5, -- s the engine must keep saying "not in the world" before that counts
+    -- A pose is held from poseFrom s into the air until poseClear s before
+    -- the wheels touch (landing in one bails). 0.12 / 0.4 left 0.33 s of a
+    -- funbox's 0.85 s to hold it in, against the 0.3 s a pose must be held.
+    poseFrom   = 0.08,
+    poseClear  = 0.28,
+    grindHold  = 1.4,   -- s on a rail before hopping off it (a laid rail usually ends first)
 }
 
 --------------------------------------------------------------------------
@@ -99,10 +121,12 @@ Bot.Brain = Brain    -- sv_botnav.lua routes it on the navmesh
 
 function Bot.Attach(ply, bike, opts)
     opts = opts or {}
+    local spawnRamp = opts.allowSpawnRamp
+    if spawnRamp == nil then spawnRamp = Bot.PropsAllowed() end
     local b = setmetatable({
         ply = ply, bike = bike, home = opts.home or bike:GetPos(),
         scored = {}, combos = {}, results = {}, log = {}, props = {},
-        allowSpawnRamp = opts.allowSpawnRamp ~= false,
+        allowSpawnRamp = spawnRamp and true or false,
         allowFindRamp  = opts.allowFindRamp ~= false,
         quiet = opts.quiet or false,
         wasScripted = ply.BMXScripted,
@@ -250,9 +274,39 @@ function Brain:rideLine(a, dir, speed, done, timeout, extra)
         if (inp.brakeFront or 0) > 0 then inp.lean = inp.lean * math.Clamp(self:speed() / 250, 0, 1) * 0.5 end
         self:set(inp)
         if done and done(along, lateral) then return true end
+        -- The end of the clear run it measured (Brain.runEnd, set by a flat
+        -- trick from openRun): the trick stops there, whatever it was doing.
+        -- A combo rides ~1100 u, was given a 900 u run, and went on into a
+        -- viaduct's pier.
+        if self.runEnd and (self.bike:GetPos() - self.runEnd.from):Dot(self.runEnd.dir) > self.runEnd.len then
+            self:say("end of the clear run: stopping")
+            self:stop(2)
+            return false, "end of the run"
+        end
         tick()
     end
     return false, "timed out"
+end
+
+-- Flat tricks: the run they were given, from where the bike is now.
+function Brain:holdToRun(dir, len)
+    self.runEnd = { from = self.bike:GetPos(), dir = dir, len = math.max(len - 120, 100) }
+end
+
+-- Something solid just ahead, along the way the bike is moving? A kerb, a
+-- planting bed, a pier's plinth: ridden into below hopping speed, a 20 u kerb
+-- does not stop the bike, its wheels sink into it and it falls over (twice in
+-- one lap of petopia_bmx_fall).
+function Brain:blockedAhead(dist)
+    local v = self.bike:GetVelocity()
+    v.z = 0
+    -- Barely moving is not running into anything (it turns there, or backs
+    -- off it: Brain:backOff).
+    if v:Length() < 15 then return false end
+    local p = self.bike:GetPos()
+    local tr = util.TraceHull({ start = p + UP * 4, endpos = p + UP * 4 + v:GetNormalized() * dist,
+        mins = Vector(-8, -8, 0), maxs = Vector(8, 8, 26), filter = self:filter(), mask = MASK_SOLID })
+    return tr.Hit and not tr.StartSolid and tr.HitNormal.z < 0.7
 end
 
 -- Ride to a point and stop near it.
@@ -261,8 +315,10 @@ function Brain:rideTo(p, speed, radius, timeout)
     local stuckSince = nil
     while CurTime() - t0 < (timeout or 15) do
         if not self:riding() then return false, "off the bike" end
-        -- Stuck (against something, wheels spinning): no use waiting out
-        -- the whole timeout.
+        -- Stuck (against something, wheels spinning, or held up short of
+        -- it by blockedAhead): no use waiting out the whole timeout.
+        local blocked = self:blockedAhead(30 + self:speed() * 0.3)
+        self:backOff()
         if self:speed() < 8 and CurTime() - t0 > 2 then
             stuckSince = stuckSince or CurTime()
             if CurTime() - stuckSince > 2.5 then return false, "stuck on the way to the spot" end
@@ -283,6 +339,7 @@ function Brain:rideTo(p, speed, radius, timeout)
         local target = math.min(speed, math.abs(err) > 90 and 60 or (math.abs(err) > 40 and 140 or speed))
         if dist < 250 then target = math.min(target, 90 + dist * 0.4) end
         local thr, brk = self:pace(target)
+        if blocked then thr, brk = 0, 1 end
         self:set({ throttle = thr, brakeRear = brk, lean = lean })
         tick()
     end
@@ -293,7 +350,12 @@ end
 function Brain:stop(timeout)
     local t0 = CurTime()
     while self:speed() > 10 and CurTime() - t0 < (timeout or 4) do
-        self:set({ brakeRear = 1, brakeFront = 0.3 })
+        -- The front brake only on the level: on a funbox's slope it put the
+        -- bike on its nose and over (a stoppie, then "crash: tipped").
+        -- And only slow: at 120 u/s a touch of front brake was a stoppie,
+        -- and the next ride set off from it and fell.
+        local pitch = math.abs(math.deg(select(2, BMX.Attitude(self.bike, UP))))
+        self:set({ brakeRear = 1, brakeFront = (pitch < 5 and self:st().grounded and self:speed() < 90) and 0.3 or 0 })
         tick()
     end
     self:set({})
@@ -433,22 +495,78 @@ end
 -- Turn to face `dir` at walking pace, where A/D steer the bars directly and
 -- the bike can turn on the spot. Sprinting off in whatever direction the bike
 -- happened to point and carving round at speed threw the rider (bot_360).
-function Brain:alignTo(dir, timeout)
-    local want = math.deg(math.atan2(dir.y, dir.x))
-    local t0 = CurTime()
-    while CurTime() - t0 < (timeout or 6) do
-        if not self:riding() then return false end
-        local err = math.AngleDifference(want, self:yaw())
-        if math.abs(err) < 12 then break end
-        local thr, brk = self:pace(30)
-        self:set({ throttle = thr, brakeRear = brk, lean = math.Clamp(-err / 20, -1, 1) })
+--
+-- "On the spot" is still a circle about 100 u across, so it turns the way
+-- there is room for (the long way round if the short way is a planting bed's
+-- kerb: turned into one, the bike sank into it and fell), and with something
+-- right in front it walks the bike back a little first, as a rider would.
+function Brain:roomTo(yawOff, dist)
+    local p = self.bike:GetPos() + UP * 4
+    local d = Angle(0, self:yaw() + yawOff, 0):Forward()
+    local tr = util.TraceHull({ start = p, endpos = p + d * dist, mins = Vector(-8, -8, 0), maxs = Vector(8, 8, 26),
+                                filter = self:filter(), mask = MASK_SOLID })
+    if tr.StartSolid then return 0 end
+    return tr.Fraction * dist
+end
+
+-- Nose up against something at walking pace: walk the bike back off it
+-- (as a rider would, and as the stuck escape does), at most once a second.
+function Brain:backOff()
+    if self:speed() > 45 or CurTime() - (self.backedAt or 0) < 1 or self:roomTo(0, 45) >= 40 then return false end
+    local phys = self.bike:GetPhysicsObject()
+    if not IsValid(phys) then return false end
+    self.backedAt = CurTime()
+    local t1 = CurTime()
+    while CurTime() - t1 < 0.4 and self:riding() do
+        self:set({})
+        phys:SetVelocity(-self.bike:GetForward() * 90 + UP * 10)
         tick()
     end
     return true
 end
 
+function Brain:alignTo(dir, timeout)
+    local want = math.deg(math.atan2(dir.y, dir.x))
+    local t0 = CurTime()
+    local side = nil
+    while CurTime() - t0 < (timeout or 6) do
+        if not self:riding() then return false end
+        local err = math.AngleDifference(want, self:yaw())
+        if math.abs(err) < 12 then return true end
+        if not side then
+            side = err > 0 and 1 or -1          -- +1: round to the left
+            if math.abs(err) > 50 then
+                local l, r = self:roomTo(45, 110), self:roomTo(-45, 110)
+                if side == 1 and l < 100 and r > l + 10 then side = -1
+                elseif side == -1 and r < 100 and l > r + 10 then side = 1 end
+            end
+        end
+        -- Nose up against something: back off it before turning on, and
+        -- never roll on into it (circling at 42 u/s on full lock, the bike
+        -- rode into a planting bed's kerb and fell, twice in a lap).
+        self:backOff()
+        local thr, brk = self:pace(22)
+        if self:roomTo(0, 45) < 40 then thr, brk = 0, 1 end
+        -- The short way, A/D by how far there is to go; the long way, full lock.
+        local lean = (side == (err > 0 and 1 or -1)) and math.Clamp(-err / 20, -1, 1) or -side
+        self:set({ throttle = thr, brakeRear = brk, lean = lean })
+        tick()
+    end
+    -- Not round in time: near enough will do, the wrong way will not (a run
+    -- sprinted off 150 degrees out went into a planting bed).
+    return math.abs(math.AngleDifference(want, self:yaw())) < 30
+end
+
 -- Face along `dir` and pull away along it from where the bike is now.
 function Brain:lineUp(dir, speed, dist)
+    -- Pointing elsewhere (still rolling from the last trick, say): stop and
+    -- turn first. Carving round onto the run at 190 u/s leaned the bike over
+    -- and into a viaduct's pier.
+    local want = math.deg(math.atan2(dir.y, dir.x))
+    if math.abs(math.AngleDifference(want, self:yaw())) > 20 then
+        self:stop(3)
+        self:alignTo(dir)
+    end
     local a = self.bike:GetPos()
     return self:rideLine(a, dir, speed, function(along) return along >= (dist or 0) end, 8)
 end
@@ -684,15 +802,18 @@ function Brain:hitLaunch(l, speed)
     if IsValid(l.entity) then filter[#filter + 1] = l.entity end
     for _, pe in ipairs(l.plates or {}) do filter[#filter + 1] = pe end
     local from = l.foot - l.dir * 30
+    -- Well inside the clear run, not at its end: a stage at the very end of
+    -- one (14 u short of the next ramp) was overshot onto that ramp's slope,
+    -- and one 86 u from a planting bed left no room to turn round in.
     local back = math.min(Bot.Config.stageBack,
-        BMX.Launch.Runway(from, -l.dir, Bot.Config.stageBack, { filter = filter }) + 30)
+        BMX.Launch.Runway(from, -l.dir, Bot.Config.stageBack, { filter = filter }) - 150)
     if back < 300 then return false, string.format("no room to ride at it (%.0f u)", back) end
     local stage = l.foot - l.dir * back
     self:say(string.format("riding to the start of the run, %.0f u away", (stage - self.bike:GetPos()):Length()))
-    local ok, why = self:rideTo(stage, 160, 90, 20)
+    local ok, why = self:rideTo(stage, 160, 60, 20)
     if not ok then return false, why end
     self:say("at the start: riding at it")
-    self:alignTo(l.dir)
+    if not self:alignTo(l.dir) then return false, "could not turn to face it" end
     -- No stop: straight on to the line from the stage, sprinting.
     -- Ride the line through the foot and the lip; preload the hop so it is
     -- released on the lip, and go once the wheels leave the ramp.
@@ -707,7 +828,7 @@ function Brain:hitLaunch(l, speed)
         -- At the foot too slow to clear it -- something on the run-in held the
         -- bike up -- and it is a stall on the ramp, not a jump: give up the
         -- run (the show tries again) rather than roll back down it.
-        if along > -40 and along < 0 and self:speed() < speed * 0.75 then
+        if along > -40 and along < 0 and self:speed() < math.min(speed * 0.75, Bot.Config.launchMinSpeed) then
             tooSlow = true
             return true
         end
@@ -724,6 +845,7 @@ function Brain:hitLaunch(l, speed)
         return false, string.format("too slow at the ramp (%.0f u/s)", self:speed())
     end
     if not airborne then return false, why or "never left the lip" end
+    self.launchT = CurTime()
     local v = self.bike:GetVelocity()
     self:say(string.format("off the lip at %.0f u/s (vz %.0f), pitch %.0f, %s",
         self:speed(), v.z, math.deg(select(2, BMX.Attitude(self.bike, UP))),
@@ -740,6 +862,7 @@ local T = Bot.Tricks
 T["Bunny Hop"] = function(b)
     local dir, len = b:openRun(600)
     if not dir or len < 400 then return false, "no room" end
+    b:holdToRun(dir, len)
     local ok, why = b:lineUp(dir, 200)
     if not ok then return false, why end
     local a = b.bike:GetPos()
@@ -762,6 +885,7 @@ end
 T["Wheelie"] = function(b)
     local dir, len = b:openRun(800)
     if not dir or len < 600 then return false, "no room" end
+    b:holdToRun(dir, len)
     local t0 = CurTime()
     b:lineUp(dir, 150)
     local a = b.bike:GetPos()
@@ -777,10 +901,12 @@ end
 T["Stoppie"] = function(b)
     local dir, len = b:openRun(900)
     if not dir or len < 700 then return false, "no room" end
+    b:holdToRun(dir, len)
     local t0 = CurTime()
     b:lineUp(dir, 230)
     local a = b.bike:GetPos()
-    b:rideLine(a, dir, 240, function() return b:speed() >= 220 end, 6)
+    -- Sprinted: pedalled, the bike tops out under 220 and the stoppie never began.
+    b:rideLine(a, dir, 240, function() return b:speed() >= 220 end, 6, function() return { sprint = true } end)
     b:rideLine(a, dir, 0, function() return b:speed() < 4 end, 4,
         function() return { throttle = 0, brakeRear = 0, brakeFront = 1, pitch = -0.6 } end)
     b:set({})
@@ -797,6 +923,7 @@ end
 T["Combo"] = function(b)
     local dir, len = b:openRun(1100)
     if not dir or len < 900 then return false, "no room" end
+    b:holdToRun(dir, len)
     local t0 = CurTime()
     b:lineUp(dir, 150)
     local a = b.bike:GetPos()
@@ -881,6 +1008,61 @@ function Brain:airPart(name, t0, pose, scored)
     return false, got and ("scored " .. got.name .. " instead") or "nothing scored"
 end
 
+-- OFF THE DECK. A map's funbox or table is landed ON (the hop off its lip
+-- sends the bike up more than along), and from there it rolls on along the
+-- way it jumped, over the deck and down the far side, before it does anything
+-- else: turning round on a deck, or riding off its edge sideways to the next
+-- spot, threw it on the slope. The trick's result is settled before this
+-- (Brain.decided), so a fall on the way down is not a miss of a trick that
+-- landed.
+function Brain:rideOut(l)
+    if not (l and l.dir and l.foot) or not self:riding() then return end
+    local rest = BMX.RestHeight(self.bike:Cfg())
+    local function high() return self.bike:GetPos().z - rest > l.foot.z + 12 end
+    if high() then
+        -- Its own loop, not rideLine: straight along the jump, slowly over
+        -- the deck, braking down the far side, and only a little lean. Held
+        -- to a line, the lean saturated where a funbox's slope meets the
+        -- floor (a kink at 250 u/s) and laid the bike down.
+        local yaw = math.deg(math.atan2(l.dir.y, l.dir.x))
+        local t0, downAt = CurTime(), nil
+        while CurTime() - t0 < 8 and self:riding() do
+            local st = self:st()
+            local v = self:speed()
+            local err = math.AngleDifference(yaw, self:yaw())
+            local pitch = math.deg(select(2, BMX.Attitude(self.bike, UP)))
+            local inp = { lean = math.Clamp(-err / 40, -0.2, 0.2) }
+            if pitch < -6 then
+                -- Going down: the back brake, harder the faster.
+                inp.brakeRear = v > 170 and 1 or (v > 110 and 0.5 or 0)
+            elseif v < 70 then
+                inp.throttle = 0.5
+            elseif v > 110 then
+                inp.brakeRear = 0.3
+            end
+            if st.airMode or not st.grounded then inp = {} end
+            self:set(inp)
+            if not high() and math.abs(pitch) < 4 and st.grounded then
+                downAt = downAt or CurTime()
+                if CurTime() - downAt > 0.3 then break end
+            end
+            tick()
+        end
+    end
+    self:stop(3)
+end
+
+-- The air part's result, settled, then off the deck.
+function Brain:afterAir(l, ok, why)
+    self.decided = { ok = ok, why = why }
+    self.lastLaunch = l
+    if self:riding() then
+        self:rideOut(l)
+        self.lastLaunch = nil
+    end
+    return ok, why
+end
+
 for name in pairs(Bot.AirTricks) do
     T[name] = function(b)
         b.needAir = Bot.AirNeed(name, b.bike:Cfg())
@@ -890,7 +1072,7 @@ for name in pairs(Bot.AirTricks) do
         local t0 = CurTime()
         local ok, why = b:hitLaunch(l, Bot.Config.flipSpeed)
         if not ok then return false, why end
-        return b:airPart(name, t0)
+        return b:afterAir(l, b:airPart(name, t0))
     end
 end
 
@@ -947,7 +1129,7 @@ function Brain:airPose(name, pose, t0)
             landedFor = 0
         end
         local inp = {}
-        if st.airMode and (st.airTime or 0) >= 0.12 and self:timeToLand() > 0.4 then inp.pose = pose end
+        if st.airMode and (st.airTime or 0) >= Bot.Config.poseFrom and self:timeToLand() > Bot.Config.poseClear then inp.pose = pose end
         self:set(inp)
         tick()
     end
@@ -958,18 +1140,25 @@ function Brain:airPose(name, pose, t0)
     return false, got and ("scored " .. got.name .. " instead") or "nothing scored"
 end
 
+-- The air a frame spin, a bar spin or a pose needs: a whip turns in 0.55 s,
+-- bars in 0.42, a pose pays after 0.3 s held and must be let go before the
+-- wheels touch. A map's funbox gives about 0.85 s.
+Bot.PartAir = { Tailwhip = 0.8, Barspin = 0.7, ["Superman Backflip"] = 1.15 }
+Bot.PoseAir = 0.75
+
 local function partTrick(name, fn)
     T[name] = function(b)
-        b.needAir = 1.0
+        b.needAir = Bot.PartAir[name] or Bot.PoseAir
         local l = b:launch()
         b.needAir = nil
         if not l then return false, "nowhere to get air" end
         local t0 = CurTime()
         local ok, why = b:hitLaunch(l, Bot.Config.flipSpeed)
         if not ok then return false, why end
-        return fn(b, t0)
+        return b:afterAir(l, fn(b, t0))
     end
 end
+Bot.PartTrick = partTrick
 partTrick("Tailwhip", function(b, t0) return b:airPartSpin("Tailwhip", "whip", t0) end)
 partTrick("Barspin",  function(b, t0) return b:airPartSpin("Barspin",  "bar",  t0) end)
 partTrick("Superman", function(b, t0) return b:airPose("Superman", "superman", t0) end)
@@ -1084,7 +1273,7 @@ end
 -- length `len` and width `w`, so the crank point arrives over `lateral`
 -- (left of the rail's axis) 60 u along it as the hop comes down onto it.
 -- Returns the point to press the hop at and the direction to ride in.
-function Bot.GrindApproach(cfg, centre, dir, len, lateral, top, g)
+function Bot.GrindApproach(cfg, centre, dir, len, lateral, top, g, yawDeg)
     local H = cfg.Hop
     local left = Vector(-dir.y, dir.x, 0)
     local vz = H.popSpeed / math.sqrt(1 + H.forwardBias ^ 2)
@@ -1095,56 +1284,114 @@ function Bot.GrindApproach(cfg, centre, dir, len, lateral, top, g)
     -- The hop also kicks the bike FORWARD (Hop.forwardBias): over the flight
     -- that is tens of units, and leaving it out landed past the rail's start.
     local kick = H.popSpeed * H.forwardBias / math.sqrt(1 + H.forwardBias ^ 2)
-    local c, s = math.cos(math.rad(GRIND_YAW)), math.sin(math.rad(GRIND_YAW))
+    local c, s = math.cos(math.rad(yawDeg or GRIND_YAW)), math.sin(math.rad(yawDeg or GRIND_YAW))
     local press = centre + dir * (-len * 0.5 + 60 - GRIND_SPEED * c * t)
                          + left * (lateral - GRIND_SPEED * s * t)
     return press, (dir * c + left * s):GetNormalized(), t, H.chargeTime + 0.05, tDown, kick
 end
 
+-- The rail a grind trick rides, as `g`:
+--   centre   on the rail's line, half way along, at the GROUND's height
+--   dir      unit, the way it is ridden
+--   len      how much of it is ridden: the hop comes down 60 u in
+--   lateral  u left of the line where the crank point should land
+--   top      the rail's top above the ground; topZ, its height
+--   width    across its top
+--   stage    where the run at it starts, or nil (from where the bot is)
+--   yaw      deg the run closes on the rail's line (0: straight along it)
+-- A laid rail (bmx_bot_props) and a map's ledge (sv_botmap.lua) are both this.
+function Brain:layGrindRail(name)
+    local dir, len = self:openRun(1400)
+    if not dir or len < 1100 then return nil, "no room" end
+    local cfg = self.bike:Cfg()
+    local start = self.bike:GetPos()
+    local ground = start - UP * BMX.RestHeight(cfg)
+    local e = self:layRail(name, ground + dir * 950, dir)
+    if not e then return nil, "could not lay a rail" end
+    local lo, hi = Bot.RailBounds(e)
+    local centre = (lo + hi) * 0.5
+    centre.z = ground.z
+    -- From the MODEL's box, not the world one: a rail laid at 30 degrees
+    -- has a world box 142 u wide, and the peg grind aimed 69 u off it.
+    local mn, mx = e:OBBMins(), e:OBBMaxs()
+    local dims = { mx.x - mn.x, mx.y - mn.y, mx.z - mn.z }
+    table.sort(dims)
+    local width = dims[1]
+    local railLen = dims[3] * #(e.BMXRailPieces or { e })
+    -- A peg grind lands on the near (right-hand) edge, a crank on the middle.
+    local lateral = RAILS[name].edge and (-width * 0.5 + 2) or 0
+    -- The run at it starts where the bot stands (the rail is laid
+    -- 950 u ahead), not behind it: a stage 900 u back from the press
+    -- point was 335 u BEHIND the bot, in ground nobody had checked.
+    return { centre = centre, dir = dir, len = railLen, lateral = lateral, top = RAILS[name].top,
+             topZ = hi.z, width = width, from = start, yaw = GRIND_YAW }
+end
+
 local function grindTrick(name)
     T[name] = function(b)
-        local dir, len = b:openRun(1400)
-        if not dir or len < 1100 then return false, "no room" end
+        local g, why0
+        -- The map's own first (sv_botmap.lua): a ledge, a rail.
+        if b.mapRail then g, why0 = b:mapRail(name) end
+        if not g then
+            if not b.allowSpawnRamp then return false, why0 or "no rail or ledge on this map for it" end
+            g, why0 = b:layGrindRail(name)
+            if not g then return false, why0 end
+        end
+        return b:grindRun(name, g)
+    end
+end
+
+function Brain:grindRun(name, g)
+    local b = self
+    do
         local cfg = b.bike:Cfg()
-        local start = b.bike:GetPos()
-        local ground = start - UP * BMX.RestHeight(cfg)
-        local e = b:layRail(name, ground + dir * 950, dir)
-        if not e then return false, "could not lay a rail" end
-        local lo, hi = Bot.RailBounds(e)
-        local centre = (lo + hi) * 0.5
-        centre.z = ground.z
-        -- From the MODEL's box, not the world one: a rail laid at 30 degrees
-        -- has a world box 142 u wide, and the peg grind aimed 69 u off it.
-        local mn, mx = e:OBBMins(), e:OBBMaxs()
-        local dims = { mx.x - mn.x, mx.y - mn.y, mx.z - mn.z }
-        table.sort(dims)
-        local width = dims[1]
-        local railLen = dims[3] * #(e.BMXRailPieces or { e })
-        -- A peg grind lands on the near (right-hand) edge, a crank on the middle.
-        local lateral = RAILS[name].edge and (-width * 0.5 + 2) or 0
+        local centre, dir, railLen, lateral = g.centre, g.dir, g.len, g.lateral
+        local ground = Vector(centre.x, centre.y, centre.z)
+        local hi = Vector(0, 0, g.topZ)
+        local width = g.width
         local press, rideDir, flight, tCharge, tDown, kick = Bot.GrindApproach(cfg, centre, dir, railLen, lateral,
-            RAILS[name].top, physenv.GetGravity():Length())
+            g.top, physenv.GetGravity():Length(), g.yaw)
         -- Where the crank point should come down: 60 u along the rail.
         local landAt = centre + dir * (-railLen * 0.5 + 60) + Vector(-dir.y, dir.x, 0) * lateral
-        -- The run at it starts where the bot stands (the rail is laid
-        -- 950 u ahead), not behind it: a stage 900 u back from the press
-        -- point was 335 u BEHIND the bot, in ground nobody had checked.
-        local stage = start + rideDir * 15
-        local ok, why = b:rideTo(stage, 200, 60, 20)
+        local stage = g.stage or (g.from + rideDir * 15)
+        if g.stage then b:say(string.format("riding to the start of the run at the %s, %.0f u away", g.what or "rail",
+            (stage - b.bike:GetPos()):Length())) end
+        if g.prestage then
+            local ok0, why0 = b:rideTo(g.prestage, 200, 50, 30)
+            if not ok0 then return false, why0 end
+        end
+        local ok, why = b:rideTo(stage, g.prestage and 110 or 200, g.stage and 40 or 60, g.stage and 30 or 20)
         if not ok then return false, why end
         b:stop(3)
+        if g.stage then
+            -- THE LINE FROM WHERE IT STOPPED to where it lands, not from
+            -- where it was sent: stopped 20-40 u off the planned line, the
+            -- bike was still weaving onto it at the press and every hop on a
+            -- ledge would have come down 15 u short (the laid rail's line
+            -- always started at the bike, which is why that one landed).
+            local here = b.bike:GetPos()
+            local d = landAt - here
+            d.z = 0
+            local sideAng = math.deg(math.atan2(d:Dot(Vector(-dir.y, dir.x, 0)), d:Dot(dir)))
+            if sideAng >= 2 and sideAng <= 20 then
+                press, rideDir, flight, tCharge, tDown, kick = Bot.GrindApproach(cfg, centre, dir, railLen, lateral,
+                    g.top, physenv.GetGravity():Length(), sideAng)
+            end
+        end
         -- Face along the rail first, at walking pace: the run at a rail is
         -- only ~550 u, and a bike starting it pointed elsewhere was still
         -- swinging onto the line at the press (45 u off on the live park).
-        b:alignTo(rideDir)
+        if not b:alignTo(rideDir) then return false, "could not turn to face it" end
         local t0 = CurTime()
         local pressedAt, released = nil, false
         local missedWindow = false
         local C = cfg
         b.tightLine = true
         b:say(string.format("rail %s: %.0f long, %.1f wide, top +%.0f; hop at %.0f u/s",
-            name, railLen, width, hi.z - ground.z, GRIND_SPEED))
+            name, railLen, width or 0, hi.z - ground.z, GRIND_SPEED))
         local closest, overAt = math.huge, nil
+        local bestLat, bestAt = nil, nil
+        b.grindMissLat = nil
         ok, why = b:rideLine(press, rideDir, GRIND_SPEED, function(along)
             if b:st().grind then return true end
             if pressedAt then
@@ -1156,6 +1403,7 @@ local function grindTrick(name)
                     local d = math.abs(c.z - hi.z) + math.abs(lat)
                     if d < closest then
                         closest = d
+                        b.grindMissLat = lat
                         overAt = string.format("%.0f along, %.1f off line, %.1f above top, %.0f u/s, vz %.0f, roll %.0f",
                             u + railLen * 0.5, lat, c.z - hi.z, b:speed(), b.bike:GetVelocity().z,
                             math.deg(select(1, BMX.Attitude(b.bike, UP))))
@@ -1183,7 +1431,19 @@ local function grindTrick(name)
                 -- before the press does not show: about -9 u, the same in every
                 -- run on the dev server (4.1 -> -5.2, 3.6 -> -6.1, ...).
                 local landLat = lat + vlat * (tCharge + tDown) + Bot.Config.grindShift
+                -- Held on the line through the preload (a ledge): it lands
+                -- where it is now -- but only once it is ON the line and
+                -- settled there. Pressed 27 u off it and still closing at
+                -- 38 u/s, the held line swung it 17 u past.
+                if g.steerPreload then
+                    landLat = (math.abs(vlat) < 15) and (lat + vlat * tDown) or math.huge
+                end
                 local inWindow = toLand <= reach + 40
+                if inWindow and math.abs(landLat) < math.abs(bestLat or math.huge) then
+                    bestLat = landLat
+                    bestAt = string.format("crank %.1f u off, drifting %.1f u/s, %.0f u/s, heading %.1f off",
+                        lat, vlat, b:speed(), math.AngleDifference(b:yaw(), math.deg(math.atan2(rideDir.y, rideDir.x))))
+                end
                 -- NO FORCED PRESS. Past the window without a moment the drift
                 -- would land it on the pipe, it rides by without hopping and
                 -- the trick is tried again: a hop "at the last chance" with
@@ -1193,7 +1453,8 @@ local function grindTrick(name)
                     return true
                 end
                 local last = false
-                if inWindow and math.abs(landLat) < 2.5 then
+                -- (A ledge's top is wide, so g.tol can be wider than a pipe's.)
+                if inWindow and math.abs(landLat) < (g.tol or 2.5) then
                     b.bike.hopHeld, b.bike.hopCharge, pressedAt = true, 0, CurTime()
                     b:say(string.format("hop pressed: %.0f u/s, crank %.1f u off the line drifting %.1f u/s (lands %.1f off), heading %.1f off, %.0f u to go of %.0f%s",
                         b:speed(), lat, vlat, landLat,
@@ -1210,6 +1471,14 @@ local function grindTrick(name)
             -- and STOP STEERING: the landing was predicted from the drift at
             -- the press, and line corrections through the preload changed it
             -- (the same bot landed 9 u left on one map and 9 u right on another).
+            -- A LEDGE IS DIFFERENT: its top is a 10 u window, not a 3 u pipe,
+            -- and hands off through the preload the heading wandered and
+            -- the hop came down 12 u to one side or the other (every bed on
+            -- petopia_bmx_fall, a different side each). So on a ledge the line
+            -- is held while the wheels are down, and let go at the pop.
+            if pressedAt and g.steerPreload and b:st().grounded and not b:st().airMode then
+                return { throttle = 0, brakeRear = 0 }
+            end
             if pressedAt then
                 -- And in the air, HOLD IT LEVEL. The crank point is ~21 u
                 -- below the mass centre, so 28 degrees of roll in flight puts
@@ -1224,15 +1493,42 @@ local function grindTrick(name)
             end
         end)
         if missedWindow then
-            b:say("never lined up on the rail closely enough to hop: riding by")
+            b:say(string.format("never lined up on the rail closely enough to hop (best: lands %s u off; %s): riding by",
+                bestLat and string.format("%.1f", bestLat) or "never in the window", bestAt or "-"))
+            b.tightLine = false
             b:stop(3)
             return false, "never lined up"
         end
         b:say("closest the crank point came: " .. (overAt or "never over the rail"))
         b.tightLine = false
-        -- On it: hold still and let the rail's end finish it.
+        -- On it: hold still, and hop off after g.hold s or when it slows
+        -- (a ledge is long: one that ran out of speed dropped the bike off
+        -- its side at walking pace and laid it down). A hop off a grind
+        -- pops the bike up and away from the top, onto the floor beside it.
         local tg = CurTime()
-        while b:st().grind and CurTime() - tg < 6 do b:set({}) tick() end
+        local hold = g.hold or Bot.Config.grindHold
+        local hopAt
+        while b:st().grind and CurTime() - tg < 6 do
+            b:set({})
+            local v = b:speed()
+            if not hopAt and (CurTime() - tg >= hold or (CurTime() - tg > 0.5 and v < 120)) then
+                hopAt = CurTime()
+                b.bike.hopHeld, b.bike.hopCharge = true, 0
+            end
+            if hopAt and CurTime() - hopAt >= 0.2 then b.bike.hopRelease = true end
+            tick()
+        end
+        if hopAt then b:say(string.format("hopped off after %.1f s", hopAt - tg)) end
+        -- Paid for on the rail: a fall on the way off it is not a miss of it.
+        if b:scoredSince(t0, name) then b.decided = { ok = true } end
+        -- Off a ledge: away from it before stopping, not along its kerb (the
+        -- next ride from there ran with a wheel up on it).
+        if g.side and b:riding() then
+            b:waitLanded(0.2, 2)
+            local away = (dir - g.side * 0.45):GetNormalized()
+            local from = b.bike:GetPos()
+            b:rideLine(from, away, 120, function(along) return along > 140 end, 3)
+        end
         b:waitLanded(0.6, 3)
         if b:scoredSince(t0, name) and b:riding() then return true end
         local got = b:scoredSince(t0)
@@ -1343,8 +1639,17 @@ function Bot.Perform(b, name, done)
     b.results[name] = r
     r.tries = r.tries + 1
     b.current = name
+    b.decided = nil
+    b.runEnd = nil
     b.jobRode, b.jobStart = false, CurTime()
     b.job = coroutine.create(function()
+        -- Still up on the deck it last jumped onto (a crash got it back on
+        -- the bike up there, say): down off it first, the way it jumped.
+        if b.lastLaunch then
+            local l = b.lastLaunch
+            b.lastLaunch = nil
+            b:rideOut(l)
+        end
         local ok, why = fn(b)
         return ok, why
     end)
@@ -1375,8 +1680,37 @@ function Brain:recover()
     if IsValid(ply:GetVehicle()) then return end
     if (self.nextMount or 0) > CurTime() then return end
     self.nextMount = CurTime() + 0.5
+    -- Fallen INTO something -- the kerb plinth round a viaduct's pier, where
+    -- the wheels' ground traces start inside it -- it is put on open ground
+    -- first: got back on where it lay, it fell straight over again, trick
+    -- after trick.
+    -- Or fallen ONTO one: a planting bed's top is no place to set off from
+    -- (it rode off the 20 u kerb and fell again).
+    if not self.recovering and (Bot.Embedded(bike, ply) or Bot.OnMapSolid(bike, ply)) then
+        self.recovering = true
+        self:unstick("fallen into something")
+        self.recovering = nil
+        if IsValid(ply:GetVehicle()) then return end
+    end
     ply:SetPos(BMX.ExitPoint and BMX.ExitPoint(bike, ply) or bike:GetPos() + Vector(0, 40, 8))
     ply:EnterVehicle(bike:GetPod())
+end
+
+-- Is the bike lying on one of the map's solid ENTITIES (a planting bed, a
+-- pier's plinth: bmx_city_solid), rather than its floor?
+function Bot.OnMapSolid(bike, ply)
+    local p = bike:GetPos()
+    local tr = util.TraceLine({ start = p + UP * 8, endpos = p - UP * 40,
+                                filter = { bike, ply, bike.GetPod and bike:GetPod() or nil }, mask = MASK_SOLID })
+    return tr.Hit and IsValid(tr.Entity) and tr.Entity:GetClass() == "bmx_city_solid" or false
+end
+
+-- Is the bike sitting partly inside something solid?
+function Bot.Embedded(bike, ply)
+    local p = bike:GetPos()
+    local tr = util.TraceHull({ start = p + UP * 2, endpos = p + UP * 3, mins = Vector(-10, -10, 0), maxs = Vector(10, 10, 20),
+                                filter = { bike, ply, bike.GetPod and bike:GetPod() or nil }, mask = MASK_SOLID })
+    return tr.StartSolid and true or false
 end
 
 -- Open ground to put a stuck bot back on: its home, else the spawn points
@@ -1450,8 +1784,12 @@ function Brain:watchStuck()
     end
     if self.escape then return end
     local busy = self.job ~= nil or not self:riding()
-    if not busy or not self.stuckAt or pos:DistToSqr(self.stuckAt) > Bot.Config.stuckMove ^ 2 then
-        self.stuckAt, self.stuckSince = pos, CurTime()
+    -- Turning round on the spot is progress too: lining up for a run at
+    -- walking pace took over 4 s and counted as stuck.
+    local yaw = self.bike:GetAngles().y
+    local turned = self.stuckYaw and math.abs(math.AngleDifference(yaw, self.stuckYaw)) > 25
+    if not busy or not self.stuckAt or turned or pos:DistToSqr(self.stuckAt) > Bot.Config.stuckMove ^ 2 then
+        self.stuckAt, self.stuckSince, self.stuckYaw = pos, CurTime(), yaw
         return
     end
     local t = CurTime() - self.stuckSince
@@ -1562,7 +1900,12 @@ function Bot.Think()
                         tostring(st.grounded), tostring(st.airMode), st.speed or 0))
                     local done = b.jobDone
                     b.job = nil
-                    if done then done(false, "crashed") end
+                    -- Thrown riding away from a trick already landed (off a
+                    -- deck, say): the trick stands; only the ride out fell.
+                    local d = b.decided
+                    if done then
+                        if d then done(d.ok, d.why) else done(false, "crashed") end
+                    end
                 end
                 b:recover()
             elseif b.job then
@@ -1587,7 +1930,9 @@ hook.Add("Think", "BMX.Bot", Bot.Think)
 -- The show: every trick in the list, over and over, retrying a miss.
 function Brain:nextInShow()
     if (self.showRest or 0) > CurTime() then
-        self:set({})
+        -- Braking, not coasting: a bike rolling on through the rest at
+        -- 135 u/s ran into a planting bed and fell.
+        self:set(self:speed() > 10 and { brakeRear = 1 } or {})
         return
     end
     local name = table.remove(self.queue or {}, 1)
@@ -1695,10 +2040,17 @@ end)
 
 function Bot.Status(b)
     local out = { b.ply:Nick() .. (b.current and (" -- doing " .. b.current) or "") }
-    for _, name in ipairs(Bot.TrickList) do
+    local list = {}
+    for _, n in ipairs(Bot.TrickList) do list[#list + 1] = n end
+    for _, n in ipairs(Bot.PoseTricks or {}) do list[#list + 1] = n end
+    -- What this map can host (sv_botmap.lua): the rest are never tried here.
+    local here = {}
+    for _, n in ipairs(Bot.TrickListFor and Bot.TrickListFor(b.bike) or Bot.TrickList) do here[n] = true end
+    for _, name in ipairs(list) do
         local r = b.results[name]
-        out[#out + 1] = string.format("  %-16s %s", name,
-            r and string.format("%d/%d  %s", r.landed, r.tries, r.last or "") or "not tried")
+        out[#out + 1] = string.format("  %-18s %s", name,
+            r and string.format("%d/%d  %s", r.landed, r.tries, r.last or "")
+              or (here[name] and "not tried" or "nothing on this map for it"))
     end
     return out
 end

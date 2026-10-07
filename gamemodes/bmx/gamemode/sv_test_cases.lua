@@ -18,12 +18,17 @@ if not T or not T.Case then return end
 -- The bot is attached to the harness's own scripted rider and bike, so these
 -- run exactly like any other case. Each trick finds its own room on the map,
 -- its own launch (or puts a kicker down), and rides there itself.
+--
+-- PROPS ALLOWED HERE. The suite runs on gm_flatgrass, which has nothing to
+-- jump or grind: these cases measure the bot's riding, so they let it put its
+-- kicker and rail down (bmx_bot_props is 0 on a real server: there it rides
+-- the map as it is, sv_botmap.lua; botmap_props_off below checks that).
 --------------------------------------------------------------------------
 local function botTrick(ctx, name, opts)
     opts = opts or {}
     local brain = BMX.Bot.Attach(ctx.bot, ctx.bike, {
         quiet = true, home = ctx.ground,
-        allowSpawnRamp = opts.allowSpawnRamp, allowFindRamp = opts.allowFindRamp,
+        allowSpawnRamp = opts.allowSpawnRamp ~= false, allowFindRamp = opts.allowFindRamp,
     })
     -- WITHIN TWO ATTEMPTS, as the bot's own show allows (it retries a miss).
     -- A real park and real physics vary run to run by a few units -- a grind's
@@ -216,3 +221,19 @@ function(ctx)
 end)
 
 --------------------------------------------------------------------------
+-- THE MAP AS IT IS (sv_botmap.lua): with props off -- the default -- the bot
+-- puts nothing down. On a flat map that is a miss for an air trick, and the
+-- world is left as it was.
+--------------------------------------------------------------------------
+T.Case("botmap_props_off", { timeout = 120,
+    desc = "with props off the bot puts no kicker or rail down: on a map with nothing to jump, the tailwhip is a miss and no prop appears" },
+function(ctx)
+    local before = #ents.FindByClass("prop_physics")
+    local r, brain = botTrick(ctx, "Tailwhip", { allowSpawnRamp = false, attempts = 1 })
+    ctx:ok(brain and not brain.allowSpawnRamp, "the brain was not allowed props")
+    ctx:ok(#ents.FindByClass("prop_physics") == before, "no prop put down (" .. before .. " before, " ..
+        #ents.FindByClass("prop_physics") .. " after)")
+    if BMX.Bot.Map and BMX.Bot.Map.cat and #BMX.Bot.Map.cat.faces == 0 then
+        ctx:ok(r and not r.ok, "nothing on this map for it: a miss (" .. tostring(r and r.why) .. ")")
+    end
+end)

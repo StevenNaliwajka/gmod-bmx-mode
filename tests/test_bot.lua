@@ -493,6 +493,9 @@ end)
 T.test("show: it works through the whole list, retrying a miss", function()
     local sv = F.server()
     local E = sv.env
+    -- The whole list: with props it may put down what this empty world lacks
+    -- (without, the show is only what the map can host: test_botmap.lua).
+    E.GetConVar("bmx_bot_props"):SetString("1")
     sv:command("bmx_bot_spawn", admin(sv))
     local brain = bots(sv)[1].BMXBotBrain
     local seen = {}

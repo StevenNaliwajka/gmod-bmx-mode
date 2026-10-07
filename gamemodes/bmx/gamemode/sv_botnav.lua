@@ -70,7 +70,9 @@ function Brain:navTo(p, speed, radius, timeout)
     local t0 = CurTime()
     timeout = timeout or 25
     for attempt = 0, 1 do
-        local pts, why = Nav.Path(self.bike:GetPos(), p)
+        -- Round the ramps where it can (Bot.NavAvoid): a route over a
+        -- funbox's slope at an angle threw the rider on the way to a spot.
+        local pts, why = (Bot.PathFor or Nav.Path)(self.bike:GetPos(), p, { avoid = Bot.NavAvoid })
         if not pts then
             self:say("nav: " .. tostring(why) .. "; riding straight")
             return O.rideTo(self, p, speed, radius, timeout - (CurTime() - t0))
@@ -105,15 +107,23 @@ function Brain:followPath(pts, speed, t0, timeout)
         d.z = 0
         local seg = pts[k] - pts[k - 1]
         seg.z = 0
+        -- A corner is cut only where the short cut is clear: cutting one
+        -- beside a viaduct's pier rode the bike into the pier
+        -- (petopia_bmx_fall). Asked a few times a second, not every tick.
+        local nxt = pts[k + 1]
+        if nxt and (self.navCutK ~= k or CurTime() > (self.navCutT or 0)) then
+            self.navCutK, self.navCutT = k, CurTime() + 0.2
+            self.navCutOK = not Bot.SegmentClear or Bot.SegmentClear(pos, nxt)
+        end
+        local cut = not nxt or self.navCutOK
         -- Reached, or passed (a corner cut wide still counts).
-        if d:Length() < 70 or (seg:Length() > 1 and d:Dot(seg) < 0) then
+        if (d:Length() < 70 and cut) or d:Length() < 20 or (seg:Length() > 1 and d:Dot(seg) < 0) then
             k = k + 1
         else
             -- Aim a little past the waypoint along the next leg: the bike
             -- turns by leaning and needs the turn begun before the corner.
             local aim = wp
-            local nxt = pts[k + 1]
-            if nxt and d:Length() < 160 then aim = LerpVector(0.35, wp, nxt) end
+            if nxt and cut and d:Length() < 160 then aim = LerpVector(0.35, wp, nxt) end
             local da = aim - pos
             local want = math.deg(math.atan2(da.y, da.x))
             local lean, err = self:steerLean(want)
@@ -121,6 +131,8 @@ function Brain:followPath(pts, speed, t0, timeout)
             if math.abs(err) > 90 then target = math.min(target, 60)
             elseif math.abs(err) > 40 then target = math.min(target, 140) end
             local thr, brk = self:pace(target)
+            if self.blockedAhead and self:blockedAhead(30 + self:speed() * 0.3) then thr, brk = 0, 1 end
+            if self.backOff then self:backOff() end
             self:set({ throttle = thr, brakeRear = brk, lean = lean })
             if self:speed() < 8 and CurTime() - began > 2 then
                 stuckSince = stuckSince or CurTime()
@@ -141,7 +153,7 @@ function Brain:rideTo(p, speed, radius, timeout)
         local flat = p - from
         flat.z = 0
         if flat:Length() > 150 then
-            local ok = Nav.Straight(from, p, { stepUp = 8 })
+            local ok = Nav.Straight(from, p, { stepUp = 8, flat = Bot.Config.navFlat })
             if ok then
                 -- On the mesh, but a prop (not meshed) may still stand in the way.
                 local dir = flat:GetNormalized()
@@ -224,6 +236,14 @@ function Bot.LaunchOutcome(key, ok, why)
 end
 
 Bot.Config.navMinLaunch = Bot.Config.navMinLaunch or 80   -- u: lower is not a flip's worth of air
+-- A straight ride somewhere crosses nothing steeper than this (deg); the rest
+-- go round by the mesh, which charges a slope extra on top of its own cost.
+Bot.Config.navFlat = Bot.Config.navFlat or 8
+function Bot.NavAvoid(area)
+    local s = Nav.AreaSlope(area)
+    if s <= Bot.Config.navFlat then return 0 end
+    return 600 + s * 20
+end
 
 -- Worth trying: tall enough, and it has not let the bot down more often
 -- than it has carried a trick.

@@ -28,12 +28,16 @@ local function botPerform(sv, brain, name)
     return res
 end
 
-T.test("bot: a board's show is its own, a bike's is unchanged, and each board trick has a routine", function()
+T.test("bot: a board's show is its own, a bike's is the bike's, and each board trick has a routine", function()
     local sv = F.server()
     local Bot = sv.env.BMX.Bot
     local bike = F.bike(sv)
     local e = BF.board(sv)
-    T.eq(Bot.TrickListFor(bike), Bot.TrickList, "a bike runs the bike show")
+    -- A bike runs the bike show (plus the poses, and only what the map can
+    -- host: sv_botmap.lua); a board never gets any of that.
+    local has = {}
+    for _, n in ipairs(Bot.TrickListFor(bike)) do has[n] = true end
+    T.ok(has["Bunny Hop"] and has["Wheelie"] and not has["Kickflip"], "a bike runs the bike show")
     T.eq(Bot.TrickListFor(e), Bot.BoardTrickList, "a board runs its own")
     for _, name in ipairs(Bot.BoardTrickList) do
         T.eq(type(Bot.Tricks[name]), "function", name .. " has a routine")
