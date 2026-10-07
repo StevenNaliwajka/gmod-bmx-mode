@@ -1212,6 +1212,94 @@ grindTrick("Crank Grind")
 grindTrick("Double Peg Grind")
 
 --------------------------------------------------------------------------
+-- VERT TRICKS (G06): "Air 180" and "Spine Transfer". Not in TrickList (so the
+-- show and the SKATE game do not pick them, and no bot_* headless case is made
+-- for them): they need a park piece, which is only here when the bot lays one
+-- (BMX.Park, G27), so they are asked for by name -- `bmx_bot_trick Air 180`.
+--
+-- The ramp finder (BMX.FindLaunch) looks for 12-40 degree kickers and turns a
+-- quarter pipe down on purpose ("it sends you straight up, not over"), so a
+-- vert wall is laid, not found: a tall quarter pipe for the 180, a spine for
+-- the transfer, at the end of the longest clear run, and ridden at sprinting.
+--------------------------------------------------------------------------
+-- A park piece laid `run` units ahead along the clearest heading, its
+-- transition starting there. Returns the piece, the heading and the start of the
+-- run, or nil and why.
+function Brain:layPark(shape, params, run)
+    if not (BMX.Park and BMX.Park.Place and BMX.Park.Build) then return nil, "no park pieces" end
+    local dir, len = self:openRun(run + 400)
+    if not dir or len < run + 200 then return nil, string.format("no room for a run of %.0f u", run) end
+    local b = BMX.Park.Build(shape, params)
+    local from = self.bike:GetPos()
+    local foot = from + dir * run
+    local tr = util.TraceLine({ start = foot + UP * 200, endpos = foot - UP * 600,
+        filter = self:filter(), mask = MASK_SOLID })
+    if not tr.Hit then return nil, "no ground to stand the piece on" end
+    local yaw = math.deg(math.atan2(dir.y, dir.x))
+    local e, why = BMX.Park.Place(nil, shape, params, Vector(foot.x, foot.y, tr.HitPos.z) + dir * b.hl,
+        Angle(0, yaw, 0))
+    if not e then return nil, why end
+    e.BMXRail = true            -- the bot's own traces let it be (Brain:filter)
+    self.props[#self.props + 1] = e
+    if coroutine.running() then for _ = 1, 6 do tick() end end
+    return e, dir, from
+end
+
+-- Ride at the wall sprinting until the bike leaves it. True if it did.
+function Brain:rideAtWall(dir, from)
+    self:alignTo(dir)
+    self:rideLine(from, dir, 420, function() return self:st().airMode end, 10,
+        function() return { sprint = true } end)
+    return self:st().airMode and true or false
+end
+
+Bot.Tricks["Air 180"] = function(b)
+    local _, dir, from = b:layPark("quarterpipe", { 2, 3 }, 800)
+    if not _ then return false, dir end
+    local t0 = CurTime()
+    if not b:rideAtWall(dir, from) then return false, "never left the coping" end
+    local st = b:st()
+    b:say(string.format("off the coping: %s, vz %.0f", tostring(st.launchKind), b:bike_vz()))
+    if st.launchKind ~= "vert" then
+        b:set({})
+        b:waitLanded(0.5, 4)
+        return false, "left it as " .. tostring(st.launchKind) .. ", not vert"
+    end
+    -- D until a half turn is done (the assist carries it from there and the
+    -- landing aims it back down the wall), then hands off.
+    local t1 = CurTime()
+    while b:riding() and st.airMode and CurTime() - t1 < 3 do
+        if math.abs(st.vertSpin or 0) >= math.pi * 0.9 then b:set({}) else b:set({ lean = 1 }) end
+        tick()
+    end
+    b:set({})
+    b:waitLanded(0.8, 4)
+    if b:scoredSince(t0, "Air 180") and b:riding() then return true end
+    return false, "nothing scored"
+end
+
+Bot.Tricks["Spine Transfer"] = function(b)
+    local _, dir, from = b:layPark("spine", { 2, 3 }, 800)
+    if not _ then return false, dir end
+    local t0 = CurTime()
+    if not b:rideAtWall(dir, from) then return false, "never left the coping" end
+    local st = b:st()
+    -- A fresh W once the far face is seen: a press, held a moment, as a rider's is.
+    local t1, pressed = CurTime(), nil
+    while b:riding() and st.airMode and CurTime() - t1 < 3 do
+        if st.spineTarget and not pressed then pressed = CurTime() end
+        if pressed and CurTime() - pressed < 0.35 then b:set({ pitch = -1 }) else b:set({}) end
+        tick()
+    end
+    b:set({})
+    b:waitLanded(0.8, 4)
+    if b:scoredSince(t0, "Spine Transfer") and b:riding() then return true end
+    return false, pressed and "no transfer scored" or "never saw the far face"
+end
+
+function Brain:bike_vz() return self.bike:GetVelocity().z end
+
+--------------------------------------------------------------------------
 -- Running: one trick at a time, recovered from crashes.
 --------------------------------------------------------------------------
 

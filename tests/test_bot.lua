@@ -707,3 +707,12 @@ T.test("grind: a rail laid at an angle is measured by its own box, not the world
     table.sort(dims)
     T.near(dims[1], 11.8, 0.2, "but the beam itself is 11.8 wide")
 end)
+
+T.test("bot: the vert routines (G06) exist, but stay out of the trick list", function()
+    local sv = F.server()
+    local Bot = sv.env.BMX.Bot
+    for _, name in ipairs({ "Air 180", "Spine Transfer" }) do
+        T.eq(type(Bot.Tricks[name]), "function", name .. " has a routine")
+        for _, t in ipairs(Bot.TrickList or {}) do T.ok(t ~= name, name .. " is asked for by name, not picked") end
+    end
+end)
