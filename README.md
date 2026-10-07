@@ -46,6 +46,7 @@ gamemodes/bmx/gamemode/sv_games.lua         games/skate.lua, attack.lua, mambo.l
 gamemodes/bmx/gamemode/sv_scores.lua        personal bests, saved to data/bmx/scores/<map>.json
 gamemodes/bmx/gamemode/sv_bot.lua           the trick bot
 gamemodes/bmx/gamemode/sv_board_bot.lua     ...its skateboard tricks (when the addon has the skateboard)
+gamemodes/bmx/gamemode/sv_autoride.lua      the addon's auto ride (O), driven by the bot's brain
 gamemodes/bmx/gamemode/sv_test_cases.lua    the bot's cases in the addon's headless suite (bmx_test bot_*)
 gamemodes/bmx/gamemode/cl_games.lua, cl_scores.lua
 gamemodes/bmx/entities/entities/bmx_leaderboard/
@@ -93,6 +94,16 @@ poses (Superman, No-Hander, Can-Can, X-Up, Tabletop, Turndown), announces each
 landing in chat, and gets back on after a crash. It drives the bike exactly the
 way a player's keys do, and each trick counts only if the addon's own scoring
 pays it.
+
+**Auto ride.** Any player riding a bike can press `O` (the addon's auto ride
+key; also `bmx_autoride`, or the button in the `/bike` window) and the bot's
+own brain takes their bike, with them on it: the same routes, ramps, rails and
+show of tricks as Peter, getting unstuck and back on after a fall the same way.
+`O` again, or any ride key, and the bars are theirs on that keypress. It is
+quiet (no chat line per trick), never counts towards scores, is not allowed
+during a game the player is in, and takes only what the bot can ride: bikes
+with the bike's controls and the skateboard. `bmx_autoride_allow 0` (server)
+turns it off.
 
 **It rides the map as it is.** By default the bot puts nothing down: it jumps
 the map's own ramps and grinds the map's own ledges. Once per map it looks the
