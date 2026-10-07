@@ -14,7 +14,7 @@ local gmod = require("lib.gmod")
 -- tests/run.lua hands the addon's runner this repository's folders (BMX_SUITE.roots);
 -- arg[0] is the addon's runner by now, so the gamemode is found from those.
 local GM = BMX_SUITE.roots[2]:gsub("/entities$", "")
-local ICONS = GM .. "/content/materials/entities/"
+local ICONS = GM:gsub("/gamemodes/bmx$", "") .. "/materials/entities/"
 
 local function slurp(path)
     local fh = io.open(path, "r")
@@ -68,5 +68,5 @@ T.test("spawn icons: every spawnable entry has a 128x128 PNG picture", function(
         local w, h = pngSize(ICONS .. class .. ".png")
         if w ~= 128 or h ~= 128 then missing[#missing + 1] = class .. (w and (" (" .. w .. "x" .. h .. ")") or "") end
     end
-    T.eq(#missing, 0, "no 128x128 picture in content/materials/entities: " .. table.concat(missing, ", "))
+    T.eq(#missing, 0, "no 128x128 picture in materials/entities: " .. table.concat(missing, ", "))
 end)
