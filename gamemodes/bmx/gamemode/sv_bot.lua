@@ -84,6 +84,7 @@ Bot.Config = {
 --------------------------------------------------------------------------
 local Brain = {}
 Brain.__index = Brain
+Bot.Brain = Brain    -- sv_botnav.lua routes it on the navmesh
 
 function Bot.Attach(ply, bike, opts)
     opts = opts or {}

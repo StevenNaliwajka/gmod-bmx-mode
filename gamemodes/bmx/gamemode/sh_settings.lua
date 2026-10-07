@@ -18,6 +18,12 @@ S.Add{ scope = "server", name = "bmx_bot_name", kind = "string", default = "Pete
 S.Add{ scope = "server", name = "bmx_bot_model", kind = "string", default = "", maxLen = 128,
     category = "bots", label = "Bot player model",
     help = "The player model bot riders wear. Empty uses the default. The server must have the model installed." }
+S.Add{ scope = "server", name = "bmx_bot_avatar", kind = "string", default = "", maxLen = 256,
+    category = "bots", label = "Bot picture",
+    help = "A picture for bot riders on the scoreboard and on the card shown as one joins: an https link to a PNG or JPG, or a material path. Empty shows none." }
+S.Add{ scope = "server", name = "bmx_bot_nav", kind = "bool", default = true,
+    category = "bots", label = "Bots use the navmesh",
+    help = "Bot riders route round the park on the map's navmesh (bmx_nav_build makes one) and pick their ramps and runways from it. Off, they ride in straight lines." }
 S.Add{ scope = "server", name = "bmx_games_admin_only", kind = "bool", default = false,
     category = "rules", label = "Only admins start games",
     help = "Only admins may start a game of SKATE or another BMX game. Off lets any player start one." }

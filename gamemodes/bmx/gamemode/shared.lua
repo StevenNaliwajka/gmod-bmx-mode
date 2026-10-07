@@ -49,6 +49,8 @@ local SERVER_FILES = {
     "sv_scores.lua",     -- personal bests + leaderboard; listens to the addon's public hooks
     "sv_bot.lua",        -- a bot rider that does tricks (bmx_bot_spawn)
     "sv_board_bot.lua",  -- ...and its skateboard tricks (needs the addon's G23 skateboard; inert without it)
+    "sv_botnav.lua",     -- the bot routed on the addon's navmesh (BMX.Nav): paths, ramps, runways
+    "sv_botavatar.lua",  -- the bot's picture (bmx_bot_avatar) and the join card
     "sv_games.lua",      -- SKATE, Trick Attack, Combo Mambo (loads games/*)
     "sv_test_cases.lua", -- the bot's cases for the addon's headless suite (bmx_test bot_*)
 }
@@ -56,6 +58,7 @@ local SERVER_FILES = {
 local CLIENT_FILES = {
     "cl_scores.lua",     -- after the addon's cl_hud: it borrows that file's fonts
     "cl_games.lua",
+    "cl_botavatar.lua",  -- the bot's picture on every scoreboard, and the join card
 }
 
 BMXMode.Files = { shared = SHARED, server = SERVER_FILES, client = CLIENT_FILES }

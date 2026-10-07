@@ -85,3 +85,19 @@ not its own: mount a player model on your server (from the Workshop, say) and
 point `bmx_bot_model` at it. Players need it too, so add the Workshop item
 with `resource.AddWorkshop`.
 
+
+**On a navmesh** (the addon's `bmx_nav_build` makes one; a map can ship its
+`maps/<map>.nav`), the bot routes round the park instead of riding straight
+at things: an A* path with the corners taken slow, replanned once if it gets
+stuck. It picks its ramps from every launch on the map, by height and angle,
+by how far they are on the mesh, by how recently it used them, and by what
+they have actually done for it -- a ramp it has missed off more often than it
+has landed off is dropped, and then it puts a kicker down on the best long
+runway the mesh knows instead. Flat tricks and rails get a catalogued runway
+it can ride straight into, along the park's axes where it can.
+`bmx_bot_nav 0` turns all of this off.
+
+`bmx_bot_avatar` gives bot riders a picture: an https link to a PNG or JPG
+(or a material path). Every scoreboard draws it over the bot's blank Steam
+avatar, and a card with it pops up as the bot joins. Like the model, the
+picture is not part of this gamemode: host one and point the setting at it.
