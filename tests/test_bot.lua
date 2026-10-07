@@ -799,3 +799,19 @@ T.test("bot: a bike fallen out of the world is put back at once", function()
     T.eq(b.unstuck, 1, "reset")
     T.ok(math.abs(bike:GetPos().z - home.z) < 40, "back up at home height: " .. bike:GetPos().z)
 end)
+
+T.test("bot: a moment outside the world (a landing dipping into a ramp) is not a reset; staying out is", function()
+    local sv, bike, ply, b = rig()
+    local E, Bot = sv.env, sv.env.BMX.Bot
+    local inWorld = true
+    E.util.IsInWorld = function() return inWorld end
+    inWorld = false
+    sv:run(0.3)
+    T.eq(b.unstuck or 0, 0, "a blip is ignored")
+    inWorld = true
+    sv:run(0.1)
+    inWorld = false
+    sv:run(Bot.Config.outOfWorldTime + 0.5)
+    T.eq(b.unstuck, 1, "held out of the world: reset")
+    E.util.IsInWorld = nil
+end)

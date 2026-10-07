@@ -86,6 +86,7 @@ Bot.Config = {
     stuckTime  = 10,    -- s before it gives that up too and is put back on open ground
     stuckMove  = 64,    -- u
     stuckFall  = 2000,  -- u below home: fell out of the world, reset at once
+    outOfWorldTime = 1.5, -- s the engine must keep saying "not in the world" before that counts
 }
 
 --------------------------------------------------------------------------
@@ -1432,8 +1433,19 @@ end
 function Brain:watchStuck()
     local pos = self.bike:GetPos()
     local home = self.home
-    if (util.IsInWorld and not util.IsInWorld(pos)) or (home and pos.z < home.z - Bot.Config.stuckFall) then
-        return self:unstick("out of the world")
+    -- Fallen far below home is out of the world at once. The engine's own
+    -- test is only believed when it holds: the bike's origin dips into a
+    -- ramp's brush for a tick on a hard landing, and on the live park that
+    -- reset a Superman Backflip in mid-air.
+    if home and pos.z < home.z - Bot.Config.stuckFall then return self:unstick("out of the world") end
+    if util.IsInWorld and not util.IsInWorld(pos) then
+        self.outSince = self.outSince or CurTime()
+        if CurTime() - self.outSince > Bot.Config.outOfWorldTime then
+            self.outSince = nil
+            return self:unstick("out of the world")
+        end
+    else
+        self.outSince = nil
     end
     if self.escape then return end
     local busy = self.job ~= nil or not self:riding()
