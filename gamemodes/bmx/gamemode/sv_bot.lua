@@ -77,6 +77,15 @@ Bot.Config = {
     brakeShare = 1.0,   -- of an axis's full braking the pacing counts on
     landRate   = 4,     -- rad/s of spin a landing on the wheels can soak
     attempts   = 3,     -- per trick, before the bot gives up on it
+    -- STUCK: busy (a trick running, or off the bike) yet within stuckMove of
+    -- one spot for stuckTime is stuck -- wedged on a ledge, a nav route that
+    -- never arrives, a bike on its side that will not right. It gives up the
+    -- trick and is put back upright on open ground. Standing still on purpose
+    -- (resting between tricks, waiting a turn) is not busy and never counts.
+    stuckEscape = 4,    -- s without progress before it tries to get itself out
+    stuckTime  = 10,    -- s before it gives that up too and is put back on open ground
+    stuckMove  = 64,    -- u
+    stuckFall  = 2000,  -- u below home: fell out of the world, reset at once
 }
 
 --------------------------------------------------------------------------
@@ -1368,12 +1377,160 @@ function Brain:recover()
     ply:EnterVehicle(bike:GetPod())
 end
 
+-- Open ground to put a stuck bot back on: its home, else the spawn points
+-- nearest the bike. A spot is open when a bike-sized box drops onto ground
+-- there without starting inside anything.
+function Bot.OpenSpot(b)
+    local cands = {}
+    if b.home then cands[#cands + 1] = b.home end
+    local here = IsValid(b.bike) and b.bike:GetPos() or vector_origin
+    local spawns = {}
+    for _, c in ipairs({ "info_player_start", "info_player_deathmatch" }) do
+        for _, e in ipairs(ents.FindByClass(c)) do spawns[#spawns + 1] = e:GetPos() end
+    end
+    table.sort(spawns, function(p, q) return p:DistToSqr(here) < q:DistToSqr(here) end)
+    for _, p in ipairs(spawns) do cands[#cands + 1] = p end
+    local filter = { b.bike, b.ply }
+    for _, p in ipairs(cands) do
+        local tr = util.TraceHull({ start = p + UP * 80, endpos = p - UP * 200, mins = Vector(-40, -40, 0),
+                                    maxs = Vector(40, 40, 60), filter = filter, mask = MASK_SOLID })
+        if tr.Hit and not tr.StartSolid then return tr.HitPos end
+    end
+    return b.home or here
+end
+
+-- Give up what it was doing and stand the bike up on open ground.
+function Brain:unstick(why)
+    local bike = self.bike
+    self.escape = nil
+    self.unstuck = (self.unstuck or 0) + 1
+    self.stuckAt, self.stuckSince = nil, nil
+    if self.job then
+        local done = self.jobDone
+        self.job = nil
+        if done then done(false, "stuck: " .. why) end
+    end
+    local at = Bot.OpenSpot(self)
+    -- Through the physics object: Entity:SetPos is not how a body is moved.
+    local pos, ang = at + UP * (BMX.RestHeight(bike:Cfg()) + 0.5), Angle(0, bike:GetAngles().y, 0)
+    local phys = bike:GetPhysicsObject()
+    if not IsValid(phys) then
+        bike:SetPos(pos)
+        bike:SetAngles(ang)
+    else
+        phys:SetAngles(ang)
+        phys:SetPos(pos)
+        phys:SetVelocity(vector_origin)
+        phys:SetAngleVelocity(vector_origin)
+        phys:Wake()
+    end
+    self:set({})
+    if not self:riding() then self:recover() end
+    self:say(string.format("stuck (%s): back on open ground at (%.0f %.0f %.0f)", why, at.x, at.y, at.z))
+end
+
+function Brain:watchStuck()
+    local pos = self.bike:GetPos()
+    local home = self.home
+    if (util.IsInWorld and not util.IsInWorld(pos)) or (home and pos.z < home.z - Bot.Config.stuckFall) then
+        return self:unstick("out of the world")
+    end
+    if self.escape then return end
+    local busy = self.job ~= nil or not self:riding()
+    if not busy or not self.stuckAt or pos:DistToSqr(self.stuckAt) > Bot.Config.stuckMove ^ 2 then
+        self.stuckAt, self.stuckSince = pos, CurTime()
+        return
+    end
+    local t = CurTime() - self.stuckSince
+    if t > Bot.Config.stuckEscape then self:startEscape(string.format("no progress in %.0f s", t)) end
+end
+
+-- GETTING ITSELF OUT, the way a rider does before anyone helps: hop out of
+-- it toward open ground, then walk the bike backwards and turn it to face
+-- the open side, then hop again. Moving clear of the spot ends it; running
+-- out of moves (stuckTime in all) is the reset.
+Bot.EscapeMoves = {
+    { name = "bounce",  secs = 1.8 },
+    { name = "back up", secs = 1.6 },
+    { name = "bounce",  secs = 1.8 },
+}
+
+-- The heading (degrees) with the most room in front of the bike.
+function Bot.OpenHeading(b)
+    local p = b.bike:GetPos() + UP * 20
+    local best, bestYaw = -1, b.bike:GetAngles().y
+    for i = 0, 7 do
+        local yaw = bestYaw + i * 45
+        local dir = Angle(0, yaw, 0):Forward()
+        local tr = util.TraceLine({ start = p, endpos = p + dir * 400, filter = { b.bike, b.ply }, mask = MASK_SOLID })
+        local room = tr.Fraction * 400
+        if room > best + 1 then best, bestYaw = room, yaw end
+    end
+    return bestYaw
+end
+
+function Brain:startEscape(why)
+    if self.job then
+        local done = self.jobDone
+        self.job = nil
+        if done then done(false, "stuck: " .. why) end
+    end
+    self.escape = { stage = 1, t0 = CurTime(), from = self.bike:GetPos(), why = why, yaw = Bot.OpenHeading(self),
+                    started = CurTime() }
+    self:say(string.format("stuck (%s): trying to get out", why))
+end
+
+function Brain:runEscape()
+    local e, bike = self.escape, self.bike
+    local pos = bike:GetPos()
+    if pos:DistToSqr(e.from) > (Bot.Config.stuckMove * 1.5) ^ 2 and self:riding() then
+        self.escape = nil
+        self.escaped = (self.escaped or 0) + 1
+        self.stuckAt, self.stuckSince = pos, CurTime()
+        self:set({})
+        self:say("got out (" .. Bot.EscapeMoves[math.min(e.stage, #Bot.EscapeMoves)].name .. ")")
+        return
+    end
+    local move = Bot.EscapeMoves[e.stage]
+    if not move or CurTime() - e.started > Bot.Config.stuckTime then
+        self.escape = nil
+        return self:unstick(e.why)
+    end
+    if not self:riding() then self:recover() return end
+    local t = CurTime() - e.t0
+    if move.name == "bounce" then
+        local lean = self:steerLean(e.yaw)
+        self:set({ throttle = 1, sprint = true, lean = lean })
+        if t < 0.45 then
+            if not e.charging then bike.hopHeld, bike.hopCharge, e.charging = true, 0, true end
+        elseif not e.popped then
+            bike.hopRelease, e.popped = true, true
+        end
+    else
+        self:set({})
+        local phys = bike:GetPhysicsObject()
+        if t < 0.6 and IsValid(phys) then
+            phys:SetVelocity(-bike:GetForward() * 140 + UP * 30)
+        elseif not e.turned then
+            if IsValid(phys) then phys:SetAngles(Angle(0, e.yaw, 0)) else bike:SetAngles(Angle(0, e.yaw, 0)) end
+            e.turned = true
+        end
+    end
+    if t > move.secs then
+        e.stage, e.t0, e.charging, e.popped, e.turned = e.stage + 1, CurTime(), nil, nil, nil
+        e.yaw = Bot.OpenHeading(self)
+    end
+end
+
 function Bot.Think()
     for ply, b in pairs(Bot.brains) do
         if not IsValid(ply) or not IsValid(b.bike) then
             Bot.Detach(b)
         else
-            if not b:riding() and b.job and not b.jobRode then
+            b:watchStuck()
+            if b.escape then
+                b:runEscape()
+            elseif not b:riding() and b.job and not b.jobRode then
                 -- Not on yet (still getting up from the last crash, say): a
                 -- trick waits to get on before it starts, a while, rather than
                 -- counting a crash it was never part of.

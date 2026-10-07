@@ -729,3 +729,73 @@ T.test("air: a trick that only just fits on paper is not started (it needs 6% in
     T.ok(r and not r.ok and r.why == "not enough air", "refused: " .. tostring(r and r.why))
     T.ok(E.IsValid(bike:GetDriver()), "and came down on its wheels")
 end)
+
+--------------------------------------------------------------------------
+-- Stuck
+--------------------------------------------------------------------------
+
+local function flat(a, b) local d = a - b return math.sqrt(d.x * d.x + d.y * d.y) end
+
+T.test("bot: stuck mid-trick, it gives the trick up and gets itself out by bouncing or backing up", function()
+    local sv, bike, ply, b = rig()
+    local E, Bot = sv.env, sv.env.BMX.Bot
+    Bot.Tricks["Test Stall"] = function(br) while true do br:set({}) coroutine.yield() end end
+    local t0 = sv.world.time
+    local res = perform(sv, b, "Test Stall", 20)
+    Bot.Tricks["Test Stall"] = nil
+    T.ok(res and not res.ok and tostring(res.why):find("stuck", 1, true), "the trick ends as stuck: " .. tostring(res and res.why))
+    T.ok(sv.world.time - t0 >= Bot.Config.stuckEscape, "not before stuckEscape")
+    T.ok(sv.world.time - t0 < Bot.Config.stuckEscape + 1, "and soon after it")
+    local stall = b.escape and b.escape.from
+    T.ok(stall, "an escape is under way")
+    sv:run(Bot.Config.stuckTime, function() return b.escape == nil end)
+    T.ok(b.escape == nil, "and it ends")
+    T.ok((b.escaped or 0) + (b.unstuck or 0) == 1, "by getting out or by the reset, once")
+    T.ok(flat(bike:GetPos(), stall) > Bot.Config.stuckMove, "clear of the stall spot")
+    T.ok(b:riding(), "still riding")
+end)
+
+T.test("bot: the escape bounces (a hop) first, then backs the bike up", function()
+    local sv, bike, ply, b = rig()
+    local Bot = sv.env.BMX.Bot
+    b:startEscape("test")
+    T.eq(Bot.EscapeMoves[1].name, "bounce", "first a bounce")
+    T.eq(Bot.EscapeMoves[2].name, "back up", "then backing up")
+    local hopped = false
+    for _ = 1, 40 do
+        if bike.hopRelease or bike.hopHeld then hopped = true end
+        if not b.escape then break end
+        sv:run(0.05)
+    end
+    T.ok(hopped, "the bounce is a real hop")
+end)
+
+T.test("bot: put back on open ground, upright and still, riding", function()
+    local sv, bike, ply, b = rig()
+    local E = sv.env
+    local home = b.home
+    F.place(bike, home + E.Vector(300, 0, 0), E.Angle(0, 90, 40))
+    b:unstick("test")
+    T.ok(flat(bike:GetPos(), home) < 1, "at its home")
+    T.ok(math.abs(bike:GetAngles().r) < 1, "upright")
+    T.eq(b.unstuck, 1, "counted")
+    sv:run(0.5)
+    T.ok(b:riding(), "riding")
+end)
+
+T.test("bot: standing still with nothing to do is not stuck", function()
+    local sv, bike, ply, b = rig()
+    sv:run(30)
+    T.eq(b.unstuck or 0, 0, "never reset")
+    T.ok(b.escape == nil, "never escaping")
+end)
+
+T.test("bot: a bike fallen out of the world is put back at once", function()
+    local sv, bike, ply, b = rig()
+    local E = sv.env
+    local home = b.home
+    F.place(bike, home - E.Vector(0, 0, sv.env.BMX.Bot.Config.stuckFall + 500), E.Angle(0, 0, 0))
+    b:watchStuck()
+    T.eq(b.unstuck, 1, "reset")
+    T.ok(math.abs(bike:GetPos().z - home.z) < 40, "back up at home height: " .. bike:GetPos().z)
+end)
