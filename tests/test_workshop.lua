@@ -75,3 +75,10 @@ T.test("workshop: the icon is a 512x512 JPEG under 1 MB", function()
     end
     T.eq(w, 512, "width") T.eq(h, 512, "height")
 end)
+
+-- Players report bugs and ideas on the public GitHub copy (Issues on), so the page
+-- links this repository's own issue tracker.
+T.test("workshop: the page links this repository's GitHub issues", function()
+    local bb = read("workshop/description.bbcode")
+    T.ok(bb:find("[url=https://github.com/StevenNaliwajka/gmod-bmx-mode/issues]", 1, true), "links github.com/StevenNaliwajka/gmod-bmx-mode/issues")
+end)
