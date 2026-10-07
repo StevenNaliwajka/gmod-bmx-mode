@@ -1669,6 +1669,10 @@ function Bot.Perform(b, name, done)
                 p:ChatPrint(string.format("[BMX] %s landed a %s!", b.ply:Nick(), name))
             end
         end
+        -- Parked, not left with the trick's last keys held: with nothing
+        -- after it (bmx_bot_trick, a SKATE turn) the bike circled on a
+        -- touch of throttle and lean into a planting bed.
+        if IsValid(b.bike) and b.bike.input then b:set({ brakeRear = 1 }) end
         -- Tidy: a ramp or rail it put down for this trick goes.
         for _, e in ipairs(b.props) do SafeRemoveEntity(e) end
         b.props = {}

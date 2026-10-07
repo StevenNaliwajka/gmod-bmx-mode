@@ -66,8 +66,11 @@ M.Config = {
     ledgeMinLen = 240,   -- u of edge
     ledgeProbe  = 40,    -- u out from a floor area's side a ledge's face is looked for
     ledgeEvery  = 24,    -- u between samples along a side
-    ledgeLand   = 2,     -- u onto the top the crank point aims for (it must come down
-                         -- within about 6 u of the edge for the grind to find it)
+    -- u onto the top the crank point aims for. It must come down within about
+    -- 6 u of the edge for the grind to find it, and with the line held through
+    -- the preload every hop came down 5.5 u to the floor side of its aim (16
+    -- hops, every bed, both ways round): aimed 2 u on, half of them missed.
+    ledgeLand   = 7,
     ledgeTol    = 4,     -- u either way of that the press accepts
     -- THE AIM IS LEARNED PER LEDGE. Letting go of the steering at the press
     -- swings the heading a few degrees, and over a hop's 250 u of flight that
