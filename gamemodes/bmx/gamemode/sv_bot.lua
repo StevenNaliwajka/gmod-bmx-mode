@@ -533,6 +533,8 @@ function Brain:alignTo(dir, timeout)
         if not self:riding() then return false end
         local err = math.AngleDifference(want, self:yaw())
         if math.abs(err) < 12 then return true end
+        -- (Its own timeout bounds the turn: not "stuck" meanwhile.)
+        self.stuckAt, self.stuckSince = self.bike:GetPos(), CurTime()
         if not side then
             side = err > 0 and 1 or -1          -- +1: round to the left
             if math.abs(err) > 50 then
@@ -1754,7 +1756,10 @@ function Brain:unstick(why)
     if self.job then
         local done = self.jobDone
         self.job = nil
-        if done then done(false, "stuck: " .. why) end
+        -- A trick already settled (landed, then stuck rolling off the deck)
+        -- stands, as it does after a crash.
+        local d = self.decided
+        if done then if d then done(d.ok, d.why) else done(false, "stuck: " .. why) end end
     end
     local at = Bot.OpenSpot(self)
     -- Through the physics object: Entity:SetPos is not how a body is moved.
@@ -1810,10 +1815,16 @@ end
 -- it toward open ground, then walk the bike backwards and turn it to face
 -- the open side, then hop again. Moving clear of the spot ends it; running
 -- out of moves (stuckTime in all) is the reset.
+-- BACK UP FIRST, THEN EASE OUT. The escape used to open with a bounce -- a
+-- sprint and a hop, steering -- and on the live server (Petopia) a bounce from
+-- walking pace laid the bike down more often than it freed it: the crashes
+-- that followed a "stuck" were the escape's. Walked back and turned to face
+-- the open side, the bike eases away at half throttle, gently steered.
 Bot.EscapeMoves = {
-    { name = "bounce",  secs = 1.8 },
     { name = "back up", secs = 1.6 },
-    { name = "bounce",  secs = 1.8 },
+    { name = "ease",    secs = 2.0 },
+    { name = "back up", secs = 1.6 },
+    { name = "ease",    secs = 2.0 },
 }
 
 -- The heading (degrees) with the most room in front of the bike.
@@ -1834,7 +1845,10 @@ function Brain:startEscape(why)
     if self.job then
         local done = self.jobDone
         self.job = nil
-        if done then done(false, "stuck: " .. why) end
+        -- A trick already settled (landed, then stuck rolling off the deck)
+        -- stands, as it does after a crash.
+        local d = self.decided
+        if done then if d then done(d.ok, d.why) else done(false, "stuck: " .. why) end end
     end
     self.escape = { stage = 1, t0 = CurTime(), from = self.bike:GetPos(), why = why, yaw = Bot.OpenHeading(self),
                     started = CurTime() }
@@ -1859,14 +1873,11 @@ function Brain:runEscape()
     end
     if not self:riding() then self:recover() return end
     local t = CurTime() - e.t0
-    if move.name == "bounce" then
-        local lean = self:steerLean(e.yaw)
-        self:set({ throttle = 1, sprint = true, lean = lean })
-        if t < 0.45 then
-            if not e.charging then bike.hopHeld, bike.hopCharge, e.charging = true, 0, true end
-        elseif not e.popped then
-            bike.hopRelease, e.popped = true, true
-        end
+    if move.name == "ease" then
+        local lean = math.Clamp(self:steerLean(e.yaw), -0.5, 0.5)
+        local thr, brk = self:pace(70)
+        if self:blockedAhead(40) then thr, brk = 0, 1 end
+        self:set({ throttle = thr, brakeRear = brk, lean = lean })
     else
         self:set({})
         local phys = bike:GetPhysicsObject()

@@ -790,7 +790,7 @@ end)
 
 local function flat(a, b) local d = a - b return math.sqrt(d.x * d.x + d.y * d.y) end
 
-T.test("bot: stuck mid-trick, it gives the trick up and gets itself out by bouncing or backing up", function()
+T.test("bot: stuck mid-trick, it gives the trick up and gets itself out by backing up and easing away", function()
     local sv, bike, ply, b = rig()
     local E, Bot = sv.env, sv.env.BMX.Bot
     Bot.Tricks["Test Stall"] = function(br) while true do br:set({}) coroutine.yield() end end
@@ -809,19 +809,23 @@ T.test("bot: stuck mid-trick, it gives the trick up and gets itself out by bounc
     T.ok(b:riding(), "still riding")
 end)
 
-T.test("bot: the escape bounces (a hop) first, then backs the bike up", function()
+T.test("bot: the escape backs the bike up first, then eases it out, gently -- no sprint, no hop", function()
     local sv, bike, ply, b = rig()
     local Bot = sv.env.BMX.Bot
     b:startEscape("test")
-    T.eq(Bot.EscapeMoves[1].name, "bounce", "first a bounce")
-    T.eq(Bot.EscapeMoves[2].name, "back up", "then backing up")
-    local hopped = false
-    for _ = 1, 40 do
+    T.eq(Bot.EscapeMoves[1].name, "back up", "first backing up")
+    T.eq(Bot.EscapeMoves[2].name, "ease", "then easing out")
+    local hopped, sprinted, hard = false, false, false
+    for _ = 1, 120 do
         if bike.hopRelease or bike.hopHeld then hopped = true end
+        local i = bike.input or {}
+        if i.sprint then sprinted = true end
+        if math.abs(i.leanTarget or 0) > 0.5 then hard = true end
         if not b.escape then break end
         sv:run(0.05)
     end
-    T.ok(hopped, "the bounce is a real hop")
+    T.ok(not hopped and not sprinted, "no hop and no sprint: those laid it down at walking pace")
+    T.ok(not hard, "and never more than half lean")
 end)
 
 T.test("bot: put back on open ground, upright and still, riding", function()
