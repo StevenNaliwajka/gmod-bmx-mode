@@ -313,6 +313,19 @@ end
 -- answer), and rides there. Yields between points: the search is spread
 -- over ticks, not done in one.
 function Brain:findSpot(test, label)
+    -- Two passes: first only places reachable at ground level (a sweep from
+    -- 4 u up, so a box in the way is in the way); then, if that found
+    -- nothing, places visible at rider height -- on the live park the strict
+    -- pass rejected every place round a bot standing among kerbs and ramp
+    -- edges, and it looked at nothing at all.
+    for pass = 1, 2 do
+        local g, ans = self:findSpotPass(test, label, pass == 1 and 4 or 24)
+        if g then return g, ans end
+    end
+    return nil
+end
+
+function Brain:findSpotPass(test, label, sightZ)
     local here = self.bike:GetPos()
     local R, step, n = Bot.Config.roamRadius, Bot.Config.roamStep, Bot.Config.roamAngles
     local filter = self:filter()
@@ -329,7 +342,7 @@ function Brain:findSpot(test, label)
                 local g = tr.HitPos
                 -- From just off the ground: a sweep 20 u up passed over park
                 -- boxes and ledges, and the ride there got stuck on them.
-                local seen = util.TraceHull({ start = here + UP * 4, endpos = g + UP * 4,
+                local seen = util.TraceHull({ start = here + UP * sightZ, endpos = g + UP * sightZ,
                     mins = Vector(-12, -12, 0), maxs = Vector(12, 12, 40), filter = filter, mask = MASK_SOLID })
                 if not seen.Hit then
                     tried = tried + 1
@@ -575,10 +588,29 @@ end
 --------------------------------------------------------------------------
 -- Launches: find one in the world, or put a kicker down.
 --------------------------------------------------------------------------
+-- How much air a trick needs: the shortest flight in which Bot.MaxSpin turns
+-- the axis far enough, with margin. A map's ramps are often small -- 37 u
+-- lips giving 1.1 s -- which is a flip but not a frontflip off a steep
+-- takeoff, and the bot used to take any ramp and come down short.
+function Bot.AirNeed(name, cfg)
+    local A = Bot.AirTricks[name]
+    if not A then return BMX.Launch.Config.minAir end
+    local Air = (cfg or BMX.Config).Air
+    local accel = Air[AXES[A.axis].accel]
+    local target = (TAU + Bot.Config.margin) * 1.04
+    if A.axis == "pitch" and A.sign < 0 then target = target + math.rad(25) end
+    for t = 0.6, 2.5, 0.05 do
+        if Bot.MaxSpin(Air, accel, t - Bot.Config.settle * 0.5) >= target then return t end
+    end
+    return 2.5
+end
+
 function Brain:launch()
     local here = self.bike:GetPos()
+    local need = self.needAir or BMX.Launch.Config.minAir
+    local cfgNeed = setmetatable({ minAir = need }, { __index = BMX.Launch.Config })
     if self.allowFindRamp then
-        local l, n, rejected = BMX.FindLaunch(here, { filter = self:filter() })
+        local l, n, rejected = BMX.FindLaunch(here, { filter = self:filter(), config = cfgNeed })
         if l then
             self:say(string.format("found a launch: %.0f u high, %.0f deg, %.0f u away (%d seen)",
                 l.height, math.deg(l.angle), (l.foot - here):Length(), n))
@@ -588,7 +620,7 @@ function Brain:launch()
             ((rejected and rejected ~= "") and (": " .. rejected) or "") .. ")")
         -- Look for one from elsewhere in the park (a cheaper, coarser search
         -- from each place: it only has to notice a ramp is there).
-        local coarse = setmetatable({ headings = 12, step = 30, reach = 1400 }, { __index = BMX.Launch.Config })
+        local coarse = setmetatable({ headings = 12, step = 30, reach = 1400, minAir = need }, { __index = BMX.Launch.Config })
         local found
         local spot = self:findSpot(function(p)
             local l2 = BMX.FindLaunch(p + UP * 4, { filter = self:filter(), config = coarse })
@@ -834,7 +866,9 @@ end
 
 for name in pairs(Bot.AirTricks) do
     T[name] = function(b)
+        b.needAir = Bot.AirNeed(name, b.bike:Cfg())
         local l = b:launch()
+        b.needAir = nil
         if not l then return false, "nowhere to get air" end
         local t0 = CurTime()
         local ok, why = b:hitLaunch(l, Bot.Config.flipSpeed)
@@ -909,7 +943,9 @@ end
 
 local function partTrick(name, fn)
     T[name] = function(b)
+        b.needAir = 1.0
         local l = b:launch()
+        b.needAir = nil
         if not l then return false, "nowhere to get air" end
         local t0 = CurTime()
         local ok, why = b:hitLaunch(l, Bot.Config.flipSpeed)
@@ -1060,9 +1096,13 @@ local function grindTrick(name)
         local lo, hi = Bot.RailBounds(e)
         local centre = (lo + hi) * 0.5
         centre.z = ground.z
-        local size = hi - lo
-        local railLen = math.abs(size.x * dir.x) + math.abs(size.y * dir.y)
-        local width = math.abs(size.x * dir.y) + math.abs(size.y * dir.x)
+        -- From the MODEL's box, not the world one: a rail laid at 30 degrees
+        -- has a world box 142 u wide, and the peg grind aimed 69 u off it.
+        local mn, mx = e:OBBMins(), e:OBBMaxs()
+        local dims = { mx.x - mn.x, mx.y - mn.y, mx.z - mn.z }
+        table.sort(dims)
+        local width = dims[1]
+        local railLen = dims[3] * #(e.BMXRailPieces or { e })
         -- A peg grind lands on the near (right-hand) edge, a crank on the middle.
         local lateral = RAILS[name].edge and (-width * 0.5 + 2) or 0
         local press, rideDir, flight, tCharge, tDown, kick = Bot.GrindApproach(cfg, centre, dir, railLen, lateral,
@@ -1076,6 +1116,10 @@ local function grindTrick(name)
         local ok, why = b:rideTo(stage, 200, 60, 20)
         if not ok then return false, why end
         b:stop(3)
+        -- Face along the rail first, at walking pace: the run at a rail is
+        -- only ~550 u, and a bike starting it pointed elsewhere was still
+        -- swinging onto the line at the press (45 u off on the live park).
+        b:alignTo(rideDir)
         local t0 = CurTime()
         local pressedAt, released = nil, false
         local C = cfg
@@ -1125,8 +1169,10 @@ local function grindTrick(name)
                 local last = toLand <= reach - 40
                 if (inWindow and math.abs(landLat) < 2.5) or last then
                     b.bike.hopHeld, b.bike.hopCharge, pressedAt = true, 0, CurTime()
-                    b:say(string.format("hop pressed: %.0f u/s, crank %.1f u off the line drifting %.1f u/s (lands %.1f off), %.0f u to go of %.0f%s",
-                        b:speed(), lat, vlat, landLat, toLand, reach, last and " (the last chance)" or ""))
+                    b:say(string.format("hop pressed: %.0f u/s, crank %.1f u off the line drifting %.1f u/s (lands %.1f off), heading %.1f off, %.0f u to go of %.0f%s",
+                        b:speed(), lat, vlat, landLat,
+                        math.AngleDifference(b:yaw(), math.deg(math.atan2(rideDir.y, rideDir.x))),
+                        toLand, reach, last and " (the last chance)" or ""))
                 end
             end
             if pressedAt and not released and CurTime() - pressedAt >= C.Hop.chargeTime + 0.05 then

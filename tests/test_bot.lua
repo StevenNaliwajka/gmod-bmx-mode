@@ -667,3 +667,43 @@ T.test("lines: in the air the line's lean is replaced by the caller's air lean, 
     T.near(bike.input.leanTarget, 0.37, 1e-9, "the air lean, though the line is far to the left")
     T.eq(bike.input.throttle, 0, "and no pedalling")
 end)
+
+T.test("air need: every air trick asks for the air its spin needs, a frontflip the most", function()
+    local E = F.server().env
+    local Bot = E.BMX.Bot
+    for name in pairs(Bot.AirTricks) do
+        local t = Bot.AirNeed(name)
+        T.between(t, 0.8, 1.6, name .. " needs, s")
+        local A = Bot.AirTricks[name]
+        local Air = E.BMX.Config.Air
+        T.ok(Bot.MaxSpin(Air, Air[Bot.Axes[A.axis].accel], t) >= 2 * math.pi, name .. ": and that much air is enough")
+    end
+    T.ok(Bot.AirNeed("Frontflip") >= Bot.AirNeed("Backflip"), "a frontflip off a nose-up lip needs at least a backflip's")
+end)
+
+T.test("air need: a ramp that gives too little air for this trick is not taken", function()
+    local sv, bike, _, brain = rig()
+    local E = sv.env
+    local called = {}
+    local real = E.BMX.FindLaunch
+    E.BMX.FindLaunch = function(p, opts) called[#called + 1] = opts.config.minAir return nil, 0, "" end
+    brain.allowSpawnRamp = false
+    brain.needAir = 1.35
+    local res = job(sv, brain, function() return brain:launch() end, 30)
+    E.BMX.FindLaunch = real
+    T.ok(#called > 0, "it looked")
+    for _, m in ipairs(called) do T.eq(m, 1.35, "every look asked for the trick's air") end
+end)
+
+T.test("grind: a rail laid at an angle is measured by its own box, not the world's", function()
+    local sv, bike, _, brain = rig()
+    local E = sv.env
+    local dir = E.Vector(math.cos(math.rad(30)), math.sin(math.rad(30)), 0)
+    local rail = job(sv, brain, function() return brain:layRail("Double Peg Grind", E.Vector(800, 0, sv.world.groundZ), dir) end, 2)[1]
+    local lo, hi = rail:WorldSpaceAABB()
+    T.ok((hi.y - lo.y) > 100, "its world box is wide at 30 degrees: " .. (hi.y - lo.y))
+    local mn, mx = rail:OBBMins(), rail:OBBMaxs()
+    local dims = { mx.x - mn.x, mx.y - mn.y, mx.z - mn.z }
+    table.sort(dims)
+    T.near(dims[1], 11.8, 0.2, "but the beam itself is 11.8 wide")
+end)
