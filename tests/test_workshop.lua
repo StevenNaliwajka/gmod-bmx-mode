@@ -1,5 +1,5 @@
 --[[--------------------------------------------------------------------------
-    The Steam Workshop upload (tools/publish-all.ps1 in petopia_bmx_fall packs
+    The Steam Workshop upload (gmod-bmx tools/workshop_sync.py packs
     this repository with Garry's Mod's own gmad and uploads it): what Steam
     takes from it must be right before it goes.
 
