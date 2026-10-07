@@ -70,7 +70,10 @@ Bot.Config = {
     attKd      = 14,    -- 1/s
     settle     = 0.15,  -- s before touchdown the spin should be finished
     spinGain   = 9,     -- 1/s, rate loop gain in the air
-    ahead      = 1.35,  -- how far ahead of an on-time spin to run
+    -- 1.6: finish the turn early and hold the attitude for the landing. At
+    -- 1.35 a backflip on the live park came down 8 degrees short: the ground
+    -- it landed on was higher than predicted, so the touchdown came early.
+    ahead      = 1.6,   -- how far ahead of an on-time spin to run
     brakeShare = 1.0,   -- of an axis's full braking the pacing counts on
     landRate   = 4,     -- rad/s of spin a landing on the wheels can soak
     attempts   = 3,     -- per trick, before the bot gives up on it
@@ -692,7 +695,7 @@ function Brain:hitLaunch(l, speed)
         -- At the foot too slow to clear it -- something on the run-in held the
         -- bike up -- and it is a stall on the ramp, not a jump: give up the
         -- run (the show tries again) rather than roll back down it.
-        if along > -40 and along < 0 and self:speed() < speed * 0.6 then
+        if along > -40 and along < 0 and self:speed() < speed * 0.75 then
             tooSlow = true
             return true
         end
@@ -850,7 +853,9 @@ function Brain:airPart(name, t0, pose, scored)
     -- bot keeps its wheels under it and calls it a miss instead.
     local Air = self.bike:Cfg().Air
     local can = Bot.MaxSpin(Air, Air[AXES[A.axis].accel], tLand - Bot.Config.settle * 0.5)
-    if can < target * 1.0 then
+    -- With margin: a trick that only just fits on paper came down short
+    -- off a slow run at a map ramp (331 of 365 degrees).
+    if can < target * 1.06 then
         self:say(string.format("only %.0f deg of spin in %.2f s of air: not starting", math.deg(can), tLand))
         self:set({})
         self:waitLanded(0.5, 3)
@@ -1122,6 +1127,7 @@ local function grindTrick(name)
         b:alignTo(rideDir)
         local t0 = CurTime()
         local pressedAt, released = nil, false
+        local missedWindow = false
         local C = cfg
         b.tightLine = true
         b:say(string.format("rail %s: %.0f long, %.1f wide, top +%.0f; hop at %.0f u/s",
@@ -1166,8 +1172,16 @@ local function grindTrick(name)
                 -- run on the dev server (4.1 -> -5.2, 3.6 -> -6.1, ...).
                 local landLat = lat + vlat * (tCharge + tDown) + Bot.Config.grindShift
                 local inWindow = toLand <= reach + 40
-                local last = toLand <= reach - 40
-                if (inWindow and math.abs(landLat) < 2.5) or last then
+                -- NO FORCED PRESS. Past the window without a moment the drift
+                -- would land it on the pipe, it rides by without hopping and
+                -- the trick is tried again: a hop "at the last chance" with
+                -- the landing predicted 16 u off only ever missed.
+                if toLand < reach - 40 then
+                    missedWindow = true
+                    return true
+                end
+                local last = false
+                if inWindow and math.abs(landLat) < 2.5 then
                     b.bike.hopHeld, b.bike.hopCharge, pressedAt = true, 0, CurTime()
                     b:say(string.format("hop pressed: %.0f u/s, crank %.1f u off the line drifting %.1f u/s (lands %.1f off), heading %.1f off, %.0f u to go of %.0f%s",
                         b:speed(), lat, vlat, landLat,
@@ -1197,6 +1211,11 @@ local function grindTrick(name)
                          airLean = math.Clamp((-Bot.Config.attKp * roll - Bot.Config.attKd * w) / A.rollAccel, -1, 1) }
             end
         end)
+        if missedWindow then
+            b:say("never lined up on the rail closely enough to hop: riding by")
+            b:stop(3)
+            return false, "never lined up"
+        end
         b:say("closest the crank point came: " .. (overAt or "never over the rail"))
         b.tightLine = false
         -- On it: hold still and let the rail's end finish it.

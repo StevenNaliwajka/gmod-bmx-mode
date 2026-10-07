@@ -716,3 +716,16 @@ T.test("bot: the vert routines (G06) exist, but stay out of the trick list", fun
         for _, t in ipairs(Bot.TrickList or {}) do T.ok(t ~= name, name .. " is asked for by name, not picked") end
     end
 end)
+
+T.test("air: a trick that only just fits on paper is not started (it needs 6% in hand)", function()
+    local sv, bike, _, brain = rig()
+    local E = sv.env
+    launched(sv, bike, 14)
+    local real = E.BMX.Bot.MaxSpin
+    -- What the air allows: 3% more than the target -- enough on paper.
+    E.BMX.Bot.MaxSpin = function() return (2 * math.pi + E.BMX.Bot.Config.margin) * 1.03 end
+    local r = performAir(sv, brain, "Backflip")
+    E.BMX.Bot.MaxSpin = real
+    T.ok(r and not r.ok and r.why == "not enough air", "refused: " .. tostring(r and r.why))
+    T.ok(E.IsValid(bike:GetDriver()), "and came down on its wheels")
+end)

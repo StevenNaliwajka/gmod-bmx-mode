@@ -50,11 +50,17 @@ end
 local BOT_WIP = {}
 BMX.Bot.WIP = BOT_WIP
 
+-- A grind is a hop onto a 2.8 u pipe from a bike that weaves a few units:
+-- the bot rides by rather than force a hop it will miss, and tries again, so
+-- a grind gets the third attempt the show would give it too.
+local ATTEMPTS = { ["Crank Grind"] = 3, ["Double Peg Grind"] = 3 }
+
 for _, name in ipairs(BMX.Bot.TrickList) do
-    T.Case("bot_" .. name:lower():gsub("[^%w]+", "_"), { timeout = 170, wip = BOT_WIP[name],
-        desc = "the bot lands a " .. name .. ", by the scoring's own account" },
+    local tries = ATTEMPTS[name] or 2
+    T.Case("bot_" .. name:lower():gsub("[^%w]+", "_"), { timeout = 85 * tries, wip = BOT_WIP[name],
+        desc = "the bot lands a " .. name .. " within " .. tries .. " attempts, by the scoring's own account" },
     function(ctx)
-        local r = botTrick(ctx, name)
+        local r = botTrick(ctx, name, { attempts = tries })
         ctx:ok(r and r.ok, name .. " landed: " .. tostring(r and r.why or "no result"))
         ctx:ok(IsValid(ctx.bike:GetDriver()), "and the rider is still on the bike")
     end)
