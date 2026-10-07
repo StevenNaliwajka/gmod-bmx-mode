@@ -52,6 +52,7 @@ local SERVER_FILES = {
     "sv_botnav.lua",     -- the bot routed on the addon's navmesh (BMX.Nav): paths, ramps, runways
     "sv_botavatar.lua",  -- the bot's picture (bmx_bot_avatar) and the join card
     "sv_games.lua",      -- SKATE, Trick Attack, Combo Mambo (loads games/*)
+    "sv_tidy.lua",       -- anything spawned and left untouched for bmx_idle_cleanup seconds is removed
     "sv_test_cases.lua", -- the bot's cases for the addon's headless suite (bmx_test bot_*)
 }
 

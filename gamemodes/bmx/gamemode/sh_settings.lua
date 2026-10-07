@@ -27,6 +27,9 @@ S.Add{ scope = "server", name = "bmx_bot_nav", kind = "bool", default = true,
 S.Add{ scope = "server", name = "bmx_games_admin_only", kind = "bool", default = false,
     category = "rules", label = "Only admins start games",
     help = "Only admins may start a game of SKATE or another BMX game. Off lets any player start one." }
+S.Add{ scope = "server", name = "bmx_idle_cleanup", kind = "int", default = 120, min = 0, max = 3600,
+    category = "rules", label = "Clear untouched spawns after (s)",
+    help = "Anything a player spawned (props, park pieces, bikes, rentals) is removed once nobody has ridden, held, used, moved or stood on it for this many seconds. 0 never clears." }
 
 BMX.AddPrivilege{ name = "BMX - Bot", min = "admin",
     desc = "Spawn and command bot riders (bmx_bot_*)." }
