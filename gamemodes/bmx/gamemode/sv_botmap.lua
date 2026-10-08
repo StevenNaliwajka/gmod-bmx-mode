@@ -80,7 +80,7 @@ M.Config = {
     -- petopia_bmx_fall's north bed, three runs in three), differently on the
     -- next. So each attempt's sideways error is taken off the next aim there.
     ledgeLearn  = 0.7,   -- of a miss's sideways error taken off the next aim at that ledge
-    ledgeKeep   = 0.3,   -- ...and of a landed one's, to stay centred
+    ledgeKeep   = 0,     -- ...and of a landed one's (none: a landing needs no correcting)
     ledgeBiasMax = 16,   -- u: the most that correction may come to
     grindYaw    = 9,     -- deg the run closes on the ledge's line
     grindRunup  = 720,   -- u of floor before the landing point (at grindYaw, 113 u out

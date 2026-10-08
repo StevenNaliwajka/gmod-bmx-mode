@@ -1418,9 +1418,15 @@ function Brain:grindRun(name, g)
                 if math.abs(u) < railLen * 0.5 then
                     local lat = rel:Dot(Vector(-dir.y, dir.x, 0)) - lateral
                     local d = math.abs(c.z - hi.z) + math.abs(lat)
+                    -- What it missed by, read only where the crank point is down
+                    -- at the top's height: read 9 u above it on the way down
+                    -- it said "5.5 u short" of hops that then landed, and the
+                    -- learned aim ran away along the kerb.
+                    if math.abs(c.z - hi.z) < 3 and (not b.grindMissLat or math.abs(lat) < math.abs(b.grindMissLat)) then
+                        b.grindMissLat = lat
+                    end
                     if d < closest then
                         closest = d
-                        b.grindMissLat = lat
                         overAt = string.format("%.0f along, %.1f off line, %.1f above top, %.0f u/s, vz %.0f, roll %.0f",
                             u + railLen * 0.5, lat, c.z - hi.z, b:speed(), b.bike:GetVelocity().z,
                             math.deg(select(1, BMX.Attitude(b.bike, UP))))
