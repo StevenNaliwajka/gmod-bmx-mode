@@ -82,3 +82,15 @@ T.test("workshop: the page links this repository's GitHub issues", function()
     local bb = read("workshop/description.bbcode")
     T.ok(bb:find("[url=https://github.com/StevenNaliwajka/gmod-bmx-mode/issues]", 1, true), "links github.com/StevenNaliwajka/gmod-bmx-mode/issues")
 end)
+
+-- ...and a report there arrives as a form we can act on: a bug form and a
+-- suggestion form, each a GitHub issue form with a name, labels and a body.
+T.test("workshop: the GitHub issue forms exist (bug, suggestion)", function()
+    for _, f in ipairs({ "bug.yml", "suggestion.yml" }) do
+        local y = read(".github/ISSUE_TEMPLATE/" .. f)
+        T.ok(y:find("^name: ") ~= nil, f .. " has a name")
+        T.ok(y:find("\nlabels: %[") ~= nil, f .. " has labels")
+        T.ok(y:find("\nbody:\n") ~= nil, f .. " has a body")
+        T.ok(y:find("required: true") ~= nil, f .. " requires at least one field")
+    end
+end)

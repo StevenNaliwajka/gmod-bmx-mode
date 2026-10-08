@@ -1,0 +1,54 @@
+name: Bug report
+description: A game, a score, the leaderboard or the trick bot did something wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. This is the BMX (Mode) gamemode. A bug in how a bike rides
+        belongs on [gmod-bmx](https://github.com/StevenNaliwajka/gmod-bmx/issues),
+        and a bug in the Petopia map on
+        [petopia_bmx_fall](https://github.com/StevenNaliwajka/petopia_bmx_fall/issues).
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - A game (SKATE, Trick Attack, Combo Mambo)
+        - Scores, personal bests or the leaderboard
+        - The trick bot (Peter) or auto ride
+        - Bike rental or idle cleanup
+        - Menus or HUD
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server and map
+      placeholder: gmod.naliwajka.com:27015, petopia_bmx_fall
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: What were you doing? How many players were on? A video helps a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: errors
+    attributes:
+      label: Console errors
+      description: Any red text or `[BMX]` lines from the console, if there were any.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: report
+    attributes:
+      label: bmx_report output
+      description: Type `bmx_report` in the console and paste it here.
+      render: text
+    validations:
+      required: false
