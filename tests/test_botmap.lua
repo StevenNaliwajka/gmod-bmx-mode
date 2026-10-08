@@ -280,3 +280,17 @@ T.test("botmap: a 4 u pipe 18 u up is found as a crank grind's pipe, running its
     T.eq(wide.env.BMX.Bot.Map.PipeAt(wide.env.Vector(-80, 0, wide.world.groundZ), wide.env.Vector(1, 0, 0)), nil,
         "an 80 u box is a ledge's business, not a pipe")
 end)
+
+T.test("botmap: a ramp is marked down only for a launch that failed, not for the ride there or the rider", function()
+    local sv, bike, _, brain = rig()
+    local Bot, M = sv.env.BMX.Bot, sv.env.BMX.Bot.Map
+    for _, why in ipairs({ "nav: timed out", "crashed", "stuck: no progress in 4 s" }) do
+        Bot.Tricks["_t"] = function(b) b.mapFaceKey = "k" return false, why end
+        perform(sv, brain, "_t", 5)
+    end
+    T.eq(M.Stat("k").missed, 0, "route time-outs, crashes and getting stuck are not the ramp's")
+    Bot.Tricks["_t"] = function(b) b.mapFaceKey = "k" return false, "not enough air" end
+    perform(sv, brain, "_t", 5)
+    T.eq(M.Stat("k").missed, 1, "too little air is")
+    Bot.Tricks["_t"] = nil
+end)

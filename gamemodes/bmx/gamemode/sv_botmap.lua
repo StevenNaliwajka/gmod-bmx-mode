@@ -677,6 +677,16 @@ function Brain:launch()
     return l
 end
 
+-- A miss that says the launch itself failed (as opposed to the way there or
+-- the rider).
+function M.LaunchFailed(why)
+    why = tostring(why or "")
+    for _, w in ipairs({ "not enough air", "never left the lip", "too slow", "off the line", "no room to ride at it" }) do
+        if why:find(w, 1, true) then return true end
+    end
+    return false
+end
+
 -- What came of a trick off a face: its air, landed or not.
 if Bot.Perform ~= Bot.mapPerformWrap then Bot.mapPerform = Bot.Perform end
 function Bot.mapPerformWrap(b, name, done)
@@ -684,7 +694,11 @@ function Bot.mapPerformWrap(b, name, done)
     return Bot.mapPerform(b, name, function(ok, why, ...)
         if b and b.mapFaceKey then
             local s = M.Stat(b.mapFaceKey)
-            if ok then s.landed = s.landed + 1 else s.missed = s.missed + 1 end
+            -- Only what the RAMP did counts against it: on the live server the
+            -- flip kicker was retired after route time-outs on the way to it
+            -- and a crash landing a barrel roll -- the rider, not the ramp.
+            if ok then s.landed = s.landed + 1
+            elseif M.LaunchFailed(why) then s.missed = s.missed + 1 end
             if b.lastAir and b.lastAir > 0.3 then
                 s.flights = (s.flights or 0) + 1
                 s.air = s.air and (s.air + (b.lastAir - s.air) / s.flights) or b.lastAir
@@ -693,7 +707,12 @@ function Bot.mapPerformWrap(b, name, done)
         end
         if b and b.mapLedgeKey then
             local s = M.Stat(b.mapLedgeKey)
-            if ok then s.landed = s.landed + 1 else s.missed = s.missed + 1 end
+            -- Likewise a ledge: only a hop that did not take the grind.
+            local w = tostring(why or "")
+            if ok then s.landed = s.landed + 1
+            elseif w:find("no grind scored", 1, true) or w:find("never lined up", 1, true) or w:find("instead", 1, true) then
+                s.missed = s.missed + 1
+            end
             -- Came down beside it: aim that much the other way next time.
             if b.grindMissLat and math.abs(b.grindMissLat) < 30 then
                 local C = M.Config
