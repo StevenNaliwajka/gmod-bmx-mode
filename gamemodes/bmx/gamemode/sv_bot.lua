@@ -824,11 +824,18 @@ function Brain:hitLaunch(l, speed)
     local C = self.bike:Cfg()
     local lipAlong = (l.lip - l.foot):Dot(l.dir)
     local held, released = false, false
-    local airborne, tooSlow = false, false
-    ok, why = self:rideLine(l.foot, l.dir, speed, function(along)
+    local airborne, tooSlow, offLine = false, false, false
+    ok, why = self:rideLine(l.foot, l.dir, speed, function(along, lateral)
         local st = self:st()
         if released and (st.airMode or not st.grounded) then airborne = true return true end
         local toLip = lipAlong - along
+        -- Off the side of the ramp at the lip (a narrow kicker, a weave): the
+        -- hop would be on the flat beside it -- 0.6 s of air and a flip not
+        -- even begun. Given up instead, before the hop.
+        if l.width and not held and along > -20 and lateral and math.abs(lateral) > l.width * 0.5 - 20 then
+            offLine = true
+            return true
+        end
         -- At the foot too slow to clear it -- something on the run-in held the
         -- bike up -- and it is a stall on the ramp, not a jump: give up the
         -- run (the show tries again) rather than roll back down it.
@@ -844,6 +851,10 @@ function Brain:hitLaunch(l, speed)
         end
         return false
     end, 14, function() return { sprint = true } end)
+    if offLine then
+        self:stop(3)
+        return false, "off the line at the ramp"
+    end
     if tooSlow then
         self:stop(3)
         return false, string.format("too slow at the ramp (%.0f u/s)", self:speed())

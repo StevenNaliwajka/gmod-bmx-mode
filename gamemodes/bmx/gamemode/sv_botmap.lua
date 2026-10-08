@@ -58,6 +58,8 @@ M.Config = {
     dropMax     = 14,    -- u: a bigger single step down past the deck is a drop, not a roll-off
     runup       = 400,   -- u of flat clear ground before the foot (the run starts up to 150 u inside it)
     runWide     = 30,    -- u clear either side of the run-up's line
+    gridStep    = 96,    -- u between the grid points a face is also looked for from
+    kickerLanding = 380, -- u of open floor past a kicker's lip to come down on and ride away
     minWidth    = 64,    -- u across a face
     airGuess    = 0.85,  -- s of air off a face before one has been flown
     ledgeLo     = 10,    -- u a ledge stands above the floor beside it, at least...
@@ -192,12 +194,26 @@ function M.FaceAt(p, C)
     local f, why = M.ReadFace(zs, at, step, C)
     if not f then return nil, why end
     if f.height < C.minHeight then return nil, "only " .. floor(f.height) .. " u high" end
-    if f.deck < C.deckMin then return nil, "no deck to land on (" .. floor(f.deck) .. " u)" end
-    if f.roll ~= "slope" then return nil, "no way off the deck (" .. f.roll .. ")" end
     local base = Vector(p.x, p.y, 0) - dir * ((at - 1) * step)
     local function pt(i) return Vector(base.x, base.y, 0) + dir * ((i - 1) * step) + UP * zs[i] end
+    -- A KICKER: no deck, its lip drops straight back to the floor, and open
+    -- floor beyond to come down on. The hop off its lip lands on that floor,
+    -- the lip's height below: the air a flip needs.
+    local kicker = false
+    if f.roll == "drop" and f.deck < 40 then
+        local lip = pt(f.lip)
+        local landZ = M.Ground(lip.x + dir.x * 60, lip.y + dir.y * 60, lip.z, zs[f.foot] - 16)
+        local clear = landZ and abs(landZ - zs[f.foot]) <= 6
+            and BMX.Launch.Runway(Vector(lip.x, lip.y, landZ) + dir * 40 + UP * 4, dir, C.kickerLanding,
+                { filter = traceFilter }) >= C.kickerLanding - 20
+        if not clear then return nil, "a kicker with nowhere to land" end
+        kicker = true
+    else
+        if f.deck < C.deckMin then return nil, "no deck to land on (" .. floor(f.deck) .. " u)" end
+        if f.roll ~= "slope" then return nil, "no way off the deck (" .. f.roll .. ")" end
+    end
     local face = { foot = pt(f.foot), lip = pt(f.lip), dir = dir, height = f.height,
-                   length = f.len, angle = math.atan(f.height / max(f.len, 1)), deck = f.deck }
+                   length = f.len, angle = math.atan(f.height / max(f.len, 1)), deck = f.deck, kicker = kicker }
     -- Across it: the face is where the ground still leans the same way. Its
     -- middle is the line to ride (a funbox's side narrows toward the top).
     local mid = (face.foot + face.lip) * 0.5
@@ -330,6 +346,75 @@ local function ledgeFloor(l, C)
 end
 
 --------------------------------------------------------------------------
+-- PIPES: a crank grind's rail. Out from a floor area's side, the first top
+-- 10-32 u up; the addon's own rail finder (BMX.FindRail) says whether it is a
+-- pipe (both sides drop within Grind.pipeMaxWidth) and which way it runs.
+--------------------------------------------------------------------------
+function M.PipeAt(p, out, C)
+    C = C or M.Config
+    local floorZ = p.z
+    for d = 2, C.ledgeProbe, 2 do
+        local q = p + out * d
+        local z = M.Ground(q.x, q.y, floorZ + C.ledgeHi + 8, floorZ - 8)
+        if z and z >= floorZ + C.ledgeLo and z <= floorZ + C.ledgeHi then
+            local r = BMX.FindRail(Vector(q.x, q.y, z + 2), Vector(-out.y, out.x, 0) * 100, BMX.Config, traceFilter)
+            if r and r.kind == "crank" then
+                local d2 = Vector(r.dir.x, r.dir.y, 0)
+                if d2:Length() > 0.5 then
+                    d2:Normalize()
+                    return { pos = r.point, dir = d2, ground = floorZ }
+                end
+            end
+            return nil
+        elseif z and abs(z - floorZ) > 2 then
+            return nil
+        end
+    end
+end
+
+-- Pipe samples to pipes: same line, same top. Pure. { a, b, dir, top, ground, len }.
+function M.PipesFrom(samples, C)
+    C = C or M.Config
+    local groups = {}
+    for _, s in ipairs(samples) do
+        local d = s.dir
+        if abs(d.x) < abs(d.y) then d = d.y < 0 and -d or d else d = d.x < 0 and -d or d end
+        local n = Vector(-d.y, d.x, 0)
+        local line = s.pos:Dot(n)
+        local put
+        for _, g in ipairs(groups) do
+            if g.d:Dot(d) > 0.98 and abs(g.line - line) <= 4 and abs(g.top - s.pos.z) <= 3 then put = g break end
+        end
+        if not put then
+            put = { d = d, n = n, line = line, top = s.pos.z, ground = s.ground, ts = {} }
+            groups[#groups + 1] = put
+        end
+        put.ts[#put.ts + 1] = s.pos:Dot(d)
+    end
+    local out = {}
+    for _, g in ipairs(groups) do
+        table.sort(g.ts)
+        local a, b = g.ts[1], g.ts[#g.ts]
+        -- The samples come from the floor areas round it, so its ends are
+        -- found again by walking along it with the grind's own test.
+        local base = g.n * g.line + UP * g.top
+        local function on(t)
+            local q = base + g.d * t
+            local r = BMX.FindRail(Vector(q.x, q.y, g.top + 2), g.d * 100, BMX.Config, traceFilter)
+            return r and r.kind == "crank"
+        end
+        while on(a - 8) and a > g.ts[1] - 2000 do a = a - 8 end
+        while on(b + 8) and b < g.ts[#g.ts] + 2000 do b = b + 8 end
+        if b - a >= (C.pipeMinLen or 160) then
+            out[#out + 1] = { a = base + g.d * a, b = base + g.d * b, dir = g.d, top = g.top, ground = g.ground,
+                              len = b - a, key = string.format("p%d,%d,%d", floor((base.x + g.d.x * a) / 32),
+                                  floor((base.y + g.d.y * a) / 32), floor(g.top)) }
+        end
+    end
+    return out
+end
+
+--------------------------------------------------------------------------
 -- THE SCAN: once per map, a few milliseconds a tick.
 --------------------------------------------------------------------------
 M.cat = M.cat or nil
@@ -347,7 +432,7 @@ end
 function M.Scan()
     local C = M.Config
     local Nav = BMX.Nav
-    local cat = { faces = {}, ledges = {}, map = game.GetMap(), at = CurTime(), why = {} }
+    local cat = { faces = {}, ledges = {}, pipes = {}, map = game.GetMap(), at = CurTime(), why = {} }
     if not (Nav and navmesh and navmesh.GetNavAreaCount and navmesh.GetNavAreaCount() > 0) then
         cat.why.nomesh = true
         return cat
@@ -370,8 +455,36 @@ function M.Scan()
         end
         budget()
     end
+    -- ...and from a coarse grid over the whole play area: a steep kicker
+    -- had no nav area on its slope at all (the mesh keeps off a 25 degree
+    -- face it cannot path up), so it was never looked at.
+    local lo, hi
+    if Nav.WorldBox then lo, hi = Nav.WorldBox() end     -- (not `a and f()`: that keeps one value)
+    if lo and hi then
+        local zTop = hi.z
+        for x = lo.x + 32, hi.x - 32, C.gridStep do
+            for y = lo.y + 32, hi.y - 32, C.gridStep do
+                local tr = util.TraceLine({ start = Vector(x, y, min(zTop, lo.z + 700)), endpos = Vector(x, y, lo.z - 16),
+                                            mask = MASK_SOLID, filter = traceFilter })
+                if tr.Hit and not tr.StartSolid then
+                    local sl = math.deg(math.acos(math.Clamp(tr.HitNormal.z, -1, 1)))
+                    if sl >= C.minSlope and sl <= C.maxSlope then
+                        local f = M.FaceAt(tr.HitPos + UP * 2, C)
+                        if f then
+                            local dup = false
+                            for _, k in ipairs(cat.faces) do
+                                if k.dir:Dot(f.dir) > 0.98 and k.lip:Distance(f.lip) < max(k.width, 64) * 0.5 + 32 then dup = true break end
+                            end
+                            if not dup then cat.faces[#cat.faces + 1] = f end
+                        end
+                    end
+                end
+                budget()
+            end
+        end
+    end
     -- Ledges: along every flat area's four sides.
-    local samples = {}
+    local samples, pipeSamples = {}, {}
     local dirs = { Vector(1, 0, 0), Vector(-1, 0, 0), Vector(0, 1, 0), Vector(0, -1, 0) }
     for _, a in ipairs(flat) do
         local c = a:GetCenter()
@@ -386,11 +499,16 @@ function M.Scan()
                 if gz then
                     local e = M.LedgeAt(Vector(p.x, p.y, gz), out, C)
                     if e then samples[#samples + 1] = { pos = e, side = out } end
+                    local pp = M.PipeAt(Vector(p.x, p.y, gz), out, C)
+                    if pp then pipeSamples[#pipeSamples + 1] = pp end
                 end
             end
             budget()
         end
     end
+    -- Pipes: what the same walk round the floor finds standing 10-32 u up
+    -- and too narrow to be a ledge -- the grind's own test says which.
+    cat.pipes = M.PipesFrom(pipeSamples, C)
     for _, l in ipairs(M.JoinLedges(samples, C.ledgeEvery * 2.5, C.ledgeMinLen)) do
         local gz = ledgeFloor(l, C)
         if gz and l.top - gz >= C.ledgeLo and l.top - gz <= C.ledgeHi then
@@ -427,7 +545,7 @@ hook.Add("Think", "BMX.BotMap.Scan", function()
     elseif coroutine.status(job) == "dead" then
         M.job = nil
         M.cat = res
-        print(string.format("[BMX] bot map: %d ramp faces, %d ledges on %s", #res.faces, #res.ledges, res.map))
+        print(string.format("[BMX] bot map: %d ramp faces, %d ledges, %d pipes on %s", #res.faces, #res.ledges, #(res.pipes or {}), res.map))
     end
 end)
 
@@ -454,7 +572,14 @@ end
 -- The air a face gives: what it has given (the mean of the flights off it), else the guess.
 function M.FaceAir(f)
     local s = M.Stat(f.key)
-    return s.air or M.Config.airGuess
+    if s.air then return s.air end
+    -- A kicker lands its height below its lip: up ~220 u/s off the hop, then
+    -- down past where it left (190 u: 1.24 s; measured 1.17-1.26).
+    if f.kicker then
+        local vz = 220
+        return max((vz + math.sqrt(vz * vz + 1200 * f.height)) / 600 - 0.04, M.Config.airGuess)
+    end
+    return M.Config.airGuess
 end
 
 -- The flight off a launch, timed off the bike's own state: from leaving the
@@ -661,7 +786,8 @@ function M.LedgeRunClear(l, g, rideDir, C)
 end
 
 function Brain:mapRail(name)
-    if name ~= "Double Peg Grind" then return nil, "no pipe on this map a hop reaches" end
+    if name == "Crank Grind" then return self:mapPipe() end
+    if name ~= "Double Peg Grind" then return nil, "nothing on this map for it" end
     local cat = self:mapCat()
     if not cat then return nil, "the map is still being looked over" end
     local C = M.Config
@@ -702,6 +828,45 @@ function Brain:mapRail(name)
     self.mapLedgeHand = it.g.hand
     self:say(string.format("map: a %.0f u ledge, %.0f u high, %.0f u long, ridden with the top on the %s, closing at %.0f deg",
         it.ledge.top - it.ledge.ground, it.ledge.top, it.ledge.len, it.g.hand > 0 and "left" or "right", math.abs(it.g.yaw)))
+    return it.g
+end
+
+-- A pipe to crank grind, ridden straight along from either end, as a laid
+-- rail is (the recipe proved on the headless suite): the run starts in line
+-- behind its end, the hop lands the crank 60 u along it.
+function M.PipeRun(pp, rev, C)
+    C = C or M.Config
+    local dir = rev and -pp.dir or pp.dir
+    local a = rev and pp.b or pp.a
+    local centre = (pp.a + pp.b) * 0.5
+    local g = { centre = Vector(centre.x, centre.y, pp.ground), dir = dir, len = pp.len, lateral = 0,
+                top = pp.top - pp.ground, topZ = pp.top, width = 4, yaw = 0, tol = 2.5, what = "pipe",
+                key = pp.key .. (rev and "r" or "") }
+    g.stage = Vector(a.x, a.y, pp.ground) - dir * C.grindRunup
+    g.prestageLen = C.grindPrestage
+    g.prestage = g.stage - dir * g.prestageLen
+    return g, dir
+end
+
+function Brain:mapPipe()
+    local cat = self:mapCat()
+    if not cat then return nil, "the map is still being looked over" end
+    local C = M.Config
+    local cands = {}
+    for _, pp in ipairs(cat.pipes or {}) do
+        for _, rev in ipairs({ false, true }) do
+            local g, dir = M.PipeRun(pp, rev, C)
+            local s = M.Stat(g.key)
+            if s.missed <= s.landed + 2 and M.LedgeRunClear({ ground = pp.ground }, g, dir, C) then
+                cands[#cands + 1] = { key = g.key, g = g, at = g.prestage }
+            end
+        end
+    end
+    local it = pick(self, cands, function() return 0 end, function(c) return c.at end)
+    if not it then return nil, (#(cat.pipes or {}) > 0) and "no clear run at the pipe" or "no pipe on this map a hop reaches" end
+    M.Stat(it.key).used = M.Stat(it.key).used + 1
+    self.mapLedgeKey, self.mapLedgeHand = it.key, 1
+    self:say(string.format("map: a pipe %.0f u up, %.0f u long", it.g.top, it.g.len))
     return it.g
 end
 
@@ -801,7 +966,7 @@ function M.CanHost(name, cat, cfg)
     local need = AIR_NEED(name, cfg)
     if need then return M.BestAir(cat) >= need end
     if name == "Double Peg Grind" then return #cat.ledges > 0 end
-    if name == "Crank Grind" then return false end
+    if name == "Crank Grind" then return #(cat.pipes or {}) > 0 end
     return true
 end
 
@@ -843,7 +1008,7 @@ end
 concommand.Add("bmx_bot_map", function(ply)
     local cat = M.Get()
     if not cat then reply(ply, "[BMX] bot map: still looking the map over") return end
-    reply(ply, string.format("[BMX] bot map %s: %d ramp faces, %d ledges%s", cat.map, #cat.faces, #cat.ledges,
+    reply(ply, string.format("[BMX] bot map %s: %d ramp faces, %d ledges, %d pipes%s", cat.map, #cat.faces, #cat.ledges, #(cat.pipes or {}),
         cat.why.nomesh and " (no navmesh: bmx_nav_build makes one)" or ""))
     for _, f in ipairs(cat.faces) do
         local s = M.Stat(f.key)
@@ -855,6 +1020,11 @@ concommand.Add("bmx_bot_map", function(ply)
         local s, r = M.Stat(l.key), M.Stat(M.LedgeKey(l, true))
         reply(ply, string.format("  ledge (%.0f %.0f) to (%.0f %.0f), %.0f u high, %.0f long, %d/%d landed one way, %d/%d the other",
             l.a.x, l.a.y, l.b.x, l.b.y, l.top - l.ground, l.len, s.landed, s.landed + s.missed, r.landed, r.landed + r.missed))
+    end
+    for _, pp in ipairs(cat.pipes or {}) do
+        local s, r = M.Stat(pp.key), M.Stat(pp.key .. "r")
+        reply(ply, string.format("  pipe  (%.0f %.0f) to (%.0f %.0f), %.0f u high, %.0f long, %d/%d landed one way, %d/%d the other",
+            pp.a.x, pp.a.y, pp.b.x, pp.b.y, pp.top - pp.ground, pp.len, s.landed, s.landed + s.missed, r.landed, r.landed + r.missed))
     end
     local show = Bot.TrickListFor(nil)
     reply(ply, "  the show here: " .. table.concat(show, ", "))

@@ -247,3 +247,36 @@ T.test("botmap: thrown off into something (a pier's plinth), it is put on open g
     T.ok(not E.BMX.Bot.Embedded(bike, ply), "and is out of it")
     T.ok(bike:GetPos():Distance(E.Vector(460, 0, 0)) > 100, "moved to open ground")
 end)
+
+T.test("botmap: a tall kicker's air is a flip's; a funbox's is not", function()
+    local sv = F.server()
+    local E = sv.env
+    local Bot, M = E.BMX.Bot, E.BMX.Bot.Map
+    local k = { key = "k1", kicker = true, height = 190 }
+    local f = { key = "f1", kicker = false, height = 86 }
+    T.ok(M.FaceAir(k) >= Bot.AirNeed("Barrel Roll"), "190 u kicker: " .. M.FaceAir(k) .. " s, a barrel roll's")
+    T.ok(M.FaceAir(f) < Bot.AirNeed("Backflip"), "a funbox: " .. M.FaceAir(f) .. " s, not a flip's")
+    M.cat = { faces = { k }, ledges = {}, pipes = { { key = "p1", len = 300 } }, map = E.game.GetMap(), why = {} }
+    local has = {}
+    for _, n in ipairs(Bot.TrickListFor(nil)) do has[n] = true end
+    for _, n in ipairs({ "Backflip", "Frontflip", "Barrel Roll", "360", "Crank Grind", "Superman Backflip" }) do
+        T.ok(has[n], n .. " is in the show with a kicker and a pipe on the map")
+    end
+end)
+
+T.test("botmap: a 4 u pipe 18 u up is found as a crank grind's pipe, running its own way", function()
+    local E0 = F.server().env
+    local sv = F.server({ solids = { { E0.Vector(-2, -300, 0), E0.Vector(2, 300, 18) } } })
+    local E, M = sv.env, sv.env.BMX.Bot.Map
+    local gz = sv.world.groundZ
+    local p = M.PipeAt(E.Vector(-40, 0, gz), E.Vector(1, 0, 0))
+    T.ok(p, "a pipe")
+    T.near(p.pos.z, 18, 0.5, "its top")
+    T.ok(math.abs(p.dir.y) > 0.99, "running along y")
+    local pipes = M.PipesFrom({ p }, M.Config)
+    T.eq(#pipes, 1, "one pipe")
+    T.ok(pipes[1].len >= 500, "walked to its ends: " .. pipes[1].len .. " u")
+    local wide = F.server({ solids = { { E0.Vector(-40, -300, 0), E0.Vector(40, 300, 18) } } })
+    T.eq(wide.env.BMX.Bot.Map.PipeAt(wide.env.Vector(-80, 0, wide.world.groundZ), wide.env.Vector(1, 0, 0)), nil,
+        "an 80 u box is a ledge's business, not a pipe")
+end)
