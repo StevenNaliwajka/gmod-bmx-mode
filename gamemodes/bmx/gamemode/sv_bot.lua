@@ -1455,7 +1455,7 @@ function Brain:grindRun(name, g)
                 if g.steerPreload then
                     landLat = (math.abs(vlat) < 15) and (lat + vlat * tDown) or math.huge
                 end
-                local inWindow = toLand <= reach + 40
+                local inWindow = toLand <= reach + (g.window or 40)
                 if inWindow and math.abs(landLat) < math.abs(bestLat or math.huge) then
                     bestLat = landLat
                     bestAt = string.format("crank %.1f u off, drifting %.1f u/s, %.0f u/s, heading %.1f off",
@@ -1465,7 +1465,8 @@ function Brain:grindRun(name, g)
                 -- would land it on the pipe, it rides by without hopping and
                 -- the trick is tried again: a hop "at the last chance" with
                 -- the landing predicted 16 u off only ever missed.
-                if toLand < reach - 40 then
+                local win = g.window or 40     -- u of slack either side of on time
+                if toLand < reach - win then
                     missedWindow = true
                     return true
                 end
@@ -1528,7 +1529,12 @@ function Brain:grindRun(name, g)
         while b:st().grind and CurTime() - tg < 6 do
             b:set({})
             local v = b:speed()
-            if not hopAt and (CurTime() - tg >= hold or (CurTime() - tg > 0.5 and v < 120)) then
+            -- And before the rail runs out (a ledge's end): ridden off the end
+            -- of a short planting bed, the bike shot into the quarter pipe
+            -- standing beside it and stuck or fell.
+            local left = (g.len * 0.5) - (b.bike:GetPos() - g.centre):Dot(dir)
+            local nearEnd = g.side and CurTime() - tg > 0.35 and left < 40 + v * 0.25
+            if not hopAt and (CurTime() - tg >= hold or (CurTime() - tg > 0.5 and v < 120) or nearEnd) then
                 hopAt = CurTime()
                 b.bike.hopHeld, b.bike.hopCharge = true, 0
             end
@@ -1542,11 +1548,13 @@ function Brain:grindRun(name, g)
         -- next ride from there ran with a wheel up on it).
         if g.side and b:riding() then
             b:waitLanded(0.2, 2)
-            local away = (dir - g.side * 0.45):GetNormalized()
+            -- Mostly sideways, off the kerb into the floor beside it, and not
+            -- far: straight on, off a short bed's end, it rode up the quarter
+            -- pipe standing there and fell. And stopping short of whatever is
+            -- there (off the east bed it curved into the north bed's corner).
+            local away = (dir * 0.5 - g.side):GetNormalized()
             local from = b.bike:GetPos()
-            -- ...and stopping short of whatever is there (off the east bed it
-            -- curved into the north bed's corner).
-            b:rideLine(from, away, 120, function(along) return along > 140 or b:blockedAhead(40 + b:speed() * 0.4) end, 3)
+            b:rideLine(from, away, 110, function(along) return along > 90 or b:blockedAhead(40 + b:speed() * 0.4) end, 3)
         end
         b:waitLanded(0.6, 3)
         if b:scoredSince(t0, name) and b:riding() then return true end
@@ -1662,6 +1670,13 @@ function Bot.Perform(b, name, done)
     b.runEnd = nil
     b.jobRode, b.jobStart = false, CurTime()
     b.job = coroutine.create(function()
+        -- Standing on a planting bed or a pier's plinth (a hop at a kerb that
+        -- came down on top of the bed): back on open floor first. From up
+        -- there it only ever got stuck among the hedge and the lamp.
+        if Bot.OnMapSolid and IsValid(b.bike) and Bot.OnMapSolid(b.bike, b.ply) then
+            b:unstick("standing on a bed")
+            b:wait(0.5)
+        end
         -- Still up on the deck it last jumped onto (a crash got it back on
         -- the bike up there, say): down off it first, the way it jumped.
         if b.lastLaunch then
