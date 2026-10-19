@@ -873,3 +873,26 @@ T.test("bot: a moment outside the world (a landing dipping into a ramp) is not a
     T.eq(b.unstuck, 1, "held out of the world: reset")
     E.util.IsInWorld = nil
 end)
+
+-- Live Petopia, 2026-10-17: "sv_bot.lua:1971: bad argument #1 to 'status' (coroutine
+-- expected)". A trick starts by getting down off a planting bed it is standing on
+-- (b:unstick), and unstick gave up the job it was called from: the trick was a miss
+-- ("stuck: standing on a bed") before it began, and Think then asked the status of
+-- a job that was no longer there.
+T.test("bot: a trick that starts by getting off a planting bed goes on, and nothing errors", function()
+    local sv, bike, ply, brain = rig()
+    local E = sv.env
+    local real = E.BMX.Bot.OnMapSolid
+    local asked = 0
+    E.BMX.Bot.OnMapSolid = function() asked = asked + 1 return asked == 1 end
+    local res, calls = nil, 0
+    E.BMX.Bot.Perform(brain, "Wheelie", function(ok, why) calls = calls + 1 res = { ok = ok, why = why } end)
+    local ok, err = pcall(function() sv:run(40, function() return res ~= nil end) end)
+    E.BMX.Bot.OnMapSolid = real
+    T.ok(ok, "Think ran without an error: " .. tostring(err))
+    T.ok(asked >= 1 and brain.unstuck == 1, "it was put back on open ground first")
+    T.ok(res and not tostring(res.why):find("stuck", 1, true), "and the trick went on: " .. tostring(res and res.why))
+    sv:run(1)
+    T.eq(calls, 1, "its result reported once")
+    T.eq(#sv.errors, 0, "no errors: " .. table.concat(sv.errors, " | "))
+end)

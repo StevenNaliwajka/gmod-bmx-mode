@@ -32,3 +32,28 @@ T.test("bot: a launch it has missed off sinks below one it has landed off", func
     Bot.LaunchOutcome(key(b), false, "crashed")
     T.ok(Bot.LaunchScore(b) > s0, "a crash is the rider, not the ramp")
 end)
+
+-- Live Petopia, 2026-10-17: "bot trick failed: sv_botnav.lua:189: attempt to call
+-- method 'GetCenter' (a nil value)". For a spot off the mesh Nav.Path answers nil
+-- and a reason, and pickByPath took the reason for the list of areas (GMod indexes
+-- a string by number: its "areas" were the reason's letters). The trick failed.
+T.test("bot: a spot off the mesh is passed over when choosing where to go, not a failed trick", function()
+    local E, sv = env()
+    local Bot, Nav = E.BMX.Bot, E.BMX.Nav
+    local bike = F.bike(sv)
+    local ply = F.scripted(sv, bike)
+    sv:run(0.5)
+    local b = Bot.Attach(ply, bike, { quiet = true })
+    local function area(x) return { GetCenter = function() return E.Vector(x, 0, 0) end } end
+    local real = Nav.Path
+    Nav.Path = function(from, to)
+        if to.x > 500 then return nil, "off the mesh" end
+        return { from, to }, { area(from.x), area(to.x) }
+    end
+    local far, near = { x = 1000, s = 100 }, { x = 200, s = 10 }
+    local ok, best = pcall(b.pickByPath, b, { far, near }, function(it) return it.s end,
+        function(it) return E.Vector(it.x, 0, 0) end)
+    Nav.Path = real
+    T.ok(ok, "no error: " .. tostring(best))
+    T.ok(best == near, "the spot it can get to, though the other scores more")
+end)

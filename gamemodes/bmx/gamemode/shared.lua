@@ -30,7 +30,7 @@ GM.Author  = "naliwajka"
 GM.Website = "https://www.naliwajka.com/"
 
 BMXMode = BMXMode or {}
-BMXMode.Version = "1.0.0"
+BMXMode.Version = "1.0.1"
 
 -- The addon's version this gamemode was written against: the games listen to
 -- BMX_TrickLanded / BMX_ComboEnded / BMX_Crash, the bot drives BMX.Launch.

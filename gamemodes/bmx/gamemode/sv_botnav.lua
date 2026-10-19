@@ -183,8 +183,10 @@ function Brain:pickByPath(list, score, at)
     local best, bestS
     for i = 1, math.min(#rough, 5) do
         local it = rough[i].it
-        local _, areas = Nav.Path(here, at(it))
-        if areas then
+        -- Off the mesh, Nav.Path answers nil and a reason (a string, which GMod
+        -- indexes by number: read as areas, the reason's letters).
+        local pts, areas = Nav.Path(here, at(it))
+        if pts and type(areas) == "table" then
             local cost = 0
             for j = 2, #areas do cost = cost + areas[j - 1]:GetCenter():Distance(areas[j]:GetCenter()) end
             local s = score(it) - cost * 0.05

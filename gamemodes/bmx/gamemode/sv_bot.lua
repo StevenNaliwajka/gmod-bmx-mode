@@ -1785,7 +1785,9 @@ function Brain:unstick(why)
     self.escape = nil
     self.unstuck = (self.unstuck or 0) + 1
     self.stuckAt, self.stuckSince = nil, nil
-    if self.job then
+    -- A job that unsticks itself (a trick starting from on top of a planting bed)
+    -- goes on afterwards: only a job unstuck from outside is given up.
+    if self.job and coroutine.running() ~= self.job then
         local done = self.jobDone
         self.job = nil
         -- A trick already settled (landed, then stuck rolling off the deck)
@@ -1963,12 +1965,18 @@ function Bot.Think()
                 b:recover()
             elseif b.job then
                 b.jobRode = true
-                local ok, a, c = coroutine.resume(b.job)
+                -- The job it resumed, held: while it runs, the job may end itself
+                -- or a callback may start the next one, and b.job is then not it.
+                -- Only its own end is reported, and only if nobody did already.
+                local job = b.job
+                local ok, a, c = coroutine.resume(job)
                 if not ok then
-                    b.job = nil
                     ErrorNoHalt("[BMX] bot trick failed: " .. tostring(a) .. "\n")
-                    if b.jobDone then b.jobDone(false, "error: " .. tostring(a)) end
-                elseif coroutine.status(b.job) == "dead" then
+                    if b.job == job then
+                        b.job = nil
+                        if b.jobDone then b.jobDone(false, "error: " .. tostring(a)) end
+                    end
+                elseif coroutine.status(job) == "dead" and b.job == job then
                     b.job = nil
                     if b.jobDone then b.jobDone(a, c) end
                 end
