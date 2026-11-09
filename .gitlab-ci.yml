@@ -1,4 +1,50 @@
-stages: [publish]
+# ---------------------------------------------------------------------------
+# validate -> headless -> publish (2026-11-09). Until now this repository's pipeline only
+# published to GitHub: its offline suite (tests/run.lua, on the addon's harness) and its
+# in-game cases (gamemodes/bmx/gamemode/sv_test_cases.lua) ran only when someone ran them.
+#
+# RUNNERS, as gmod/gmod-bmx: a protected ref runs on the estate runner (tag deploy), any
+# other on the gmod org's own runner on the CI box (tag gmod, which has lua5.1).
+workflow:
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+      variables: { RUNNER_TAG: deploy }
+    - when: always
+      variables: { RUNNER_TAG: gmod }
+
+stages: [validate, headless, publish]
+
+variables:
+  DEV_NODE: "192.168.20.44"     # the node whose guest-exec reaches the CI box (as gmod-bmx's)
+  DEV_CT: "110149"
+
+# The offline suite boots the BMX addon in the shim and this gamemode on top of it, so it
+# needs the addon: the commit on gmod-bmx main, cloned with this job's token (gmod-bmx's
+# job-token allowlist names this project).
+validate:
+  stage: validate
+  tags: [$RUNNER_TAG]
+  script:
+    - git clone -q --depth 1 "http://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.lan/gmod/gmod-bmx.git" tests/.addon
+    - echo "addon at $(git -C tests/.addon log --oneline -1)"
+    - lua5.1 tests/run.lua
+
+# THE IN-GAME SUITE UNDER THIS GAMEMODE, on the real server (CI box 110149): every addon
+# case and this mode's own, with GMOD_GAMEMODE=bmx (the addon's tools/server/bmx-mode-test,
+# installed on the box by every gmod-bmx deploy). It shares the server with gmod-bmx's
+# pipelines; bmx-test's lock (/run/lock/bmx-test.lock) keeps the runs apart, since a
+# resource_group only orders jobs within one project.
+headless:
+  stage: headless
+  tags: [deploy]
+  resource_group: gmod-dev
+  timeout: 90m
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "root@${DEV_NODE}" "guest-exec ${DEV_CT} -- /usr/local/bin/bmx-mode-test ${CI_COMMIT_SHA}"
+
+
 
 # ---------------------------------------------------------------------------
 # THE PUBLIC GITHUB COPY, where players file issues. Every main pipeline pushes
