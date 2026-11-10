@@ -181,6 +181,20 @@ T.test("scores: a bot, a scripted rider, a noclipper and a physgun do not count"
 
     local human = sv:player("Human")
     T.ok(S.Counts(human, bike), "a plain rider")
+
+    -- SEATED IS NOT NOCLIP. The engine reports a player in a vehicle as
+    -- MOVETYPE_NOCLIP, and every rider sits in the bike's pod: read as noclip, no
+    -- rider's trick counted in a game or a score on a real server (the gamemode's
+    -- in-game suite, skate_game_with_bots, 2026-11-09). The shim says what the
+    -- engine says.
+    local seated = sv:player("Seated")
+    seated._vehicle = bike
+    seated._moveType = E.MOVETYPE_NOCLIP
+    T.ok(S.Counts(seated, bike), "a rider in the seat, which the engine calls noclip")
+    local gameBot = sv:player("GameBot", { bot = true })
+    gameBot._vehicle = bike
+    gameBot._moveType = E.MOVETYPE_NOCLIP
+    T.ok(S.Counts(gameBot, bike, true), "and a game's own bot in the seat")
     E.hook.Run("PhysgunPickup", sv:player("Griefer"), bike)
     T.ok(not S.Counts(human, bike), "a bike held in the physgun")
     E.hook.Run("PhysgunDrop", sv:player("Griefer"), bike)

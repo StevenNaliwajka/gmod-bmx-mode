@@ -105,7 +105,10 @@ function S.Counts(ply, bike, allowScripted)
     if not IsValid(ply) then return false, "no player" end
     if ply:IsBot() and not allowScripted then return false, "bot" end
     if ply.BMXScripted and not allowScripted then return false, "scripted" end
-    if ply.GetMoveType and ply:GetMoveType() == MOVETYPE_NOCLIP then return false, "noclip" end
+    -- Noclip OUT of a vehicle: the engine reports a seated player as MOVETYPE_NOCLIP,
+    -- and every rider sits in the bike's pod (tests/test_scores.lua).
+    if ply.GetMoveType and ply:GetMoveType() == MOVETYPE_NOCLIP
+        and not (ply.InVehicle and ply:InVehicle()) then return false, "noclip" end
     if IsValid(bike) then
         if bike.BMXCarried then return false, "physgun" end
         if CurTime() < (bike.BMXCarriedUntil or 0) then return false, "physgun" end

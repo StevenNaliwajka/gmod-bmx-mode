@@ -294,3 +294,29 @@ T.test("botmap: a ramp is marked down only for a launch that failed, not for the
     T.eq(M.Stat("k").missed, 1, "too little air is")
     Bot.Tricks["_t"] = nil
 end)
+
+T.test("botmap: a catalogued face whose prop has gone is not ridden at; one still there is", function()
+    -- The scan catalogues props too, and nothing takes a face out when its prop goes:
+    -- the bot's own removed kickers were ridden at as ramps (bot_superman, 2026-11-09).
+    local sv, bike, _, brain = rig()
+    local E, M = sv.env, sv.env.BMX.Bot.Map
+    local gz = sv.world.groundZ
+    local a = math.rad(14)
+    local function face(key, x, angle, rise)
+        local foot = E.Vector(x, 0, gz)
+        return { key = key, foot = foot, lip = foot + E.Vector(200, 0, rise), dir = E.Vector(1, 0, 0),
+                 angle = angle, height = rise, deck = 150 }
+    end
+    local ghost = face("ghost", 400, a, 200 * math.tan(a))    -- a 14 degree kicker, gone: bare floor under it
+    T.ok(not M.FaceStands(ghost), "a 14 degree face over bare floor is not there")
+    local flat = face("flat", 400, 0, 0)                     -- what the floor itself is
+    T.ok(M.FaceStands(flat), "a face that matches the ground under it is")
+
+    local saved = M.cat
+    M.cat = { map = E.game.GetMap(), faces = { ghost }, ledges = {}, pipes = {} }
+    T.eq(brain:mapFace(0.5), nil, "the ghost is passed over")
+    M.cat = { map = E.game.GetMap(), faces = { ghost, flat }, ledges = {}, pipes = {} }
+    local got = brain:mapFace(0.5)
+    T.ok(got and got.key == "flat", "and the one that stands is taken: " .. tostring(got and got.key))
+    M.cat = saved
+end)

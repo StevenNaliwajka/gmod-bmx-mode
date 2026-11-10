@@ -183,7 +183,7 @@ end)
 -- One letter ("S") so the first miss ends it, and generous clocks because a
 -- bot has to ride to a ramp first (the bot_* cases above allow 90 s for one).
 --------------------------------------------------------------------------
-T.Case("skate_game_with_bots", { rider = false, timeout = 300,
+T.Case("skate_game_with_bots", { rider = false, timeout = 380,
     desc = "two bots play SKATE to a result: a trick set, followed, and a letter or a win" },
 function(ctx)
     local G = BMX.Games
@@ -207,7 +207,24 @@ function(ctx)
     ctx:ok(game:Join(a.ply) and game:Join(b.ply), "both joined")
     ctx:ok(game:Begin(), "and it began")
 
-    ctx:waitUntil(function() return ended ~= nil end, 280, "the game reached a result")
+    -- What the game said, in order: a set and a follow are its own words.
+    local said = {}
+    local say = game.Say
+    game.Say = function(g, msg) said[#said + 1] = msg return say(g, msg) end
+    local function heard(pat) for _, m in ipairs(said) do if m:find(pat) then return m end end end
+
+    -- A TRICK SET AND FOLLOWED, on the game's own clocks. Then, since two bots that
+    -- both land a Stoppie every time can trade them for as long as there is time
+    -- (they did, once a seated rider's tricks counted: 2026-11-09), the try clock is
+    -- cut to 2 s: the next follower runs out of time, takes the letter, and the game
+    -- must end on it.
+    ctx:waitUntil(function() return ended ~= nil or (heard(" set the ") and
+        (heard(" landed it") or letters > 0)) end, 200, "a trick set and followed")
+    ctx:log("set: " .. tostring(heard(" set the ")) .. "; followed: " .. tostring(heard(" landed it") or (letters > 0 and "a letter")))
+    ctx:ok(heard(" set the "), "a trick was set")
+    ctx:ok(heard(" landed it") or letters > 0, "and followed: landed, or a letter")
+    game.tryTime = 2
+    ctx:waitUntil(function() return ended ~= nil end, 150, "the game reached a result")
     ctx:log(string.format("SKATE result: winner %s, %d letter(s), state %s",
         ended and IsValid(ended.winner) and ended.winner:Nick() or "none", letters, game.state))
     ctx:ok(game.state == "done", "state is done")

@@ -83,6 +83,14 @@ Bot.Config = {
     roamAngles = 10,    -- places looked at on each ring
     margin     = 0.08,  -- rad past a full turn the air controller aims for
     landPitch  = math.rad(10),  -- nose-up attitude a flip is levelled to
+    -- What a flip keeps beyond a full turn for its landing, which levelling it may
+    -- never take back, and which a flip aims past its full turn by as well. The
+    -- scoring counts the turn at touchdown, and a flip lands nose-up (rear wheel
+    -- first, and it left the kicker 12 degrees nose-up): the front wheel slapping
+    -- down takes ~10 degrees off the count. With 0.03 kept and 365 aimed for, a
+    -- Superman Backflip turned 368 and came down at 359 -- paid as Air Time, not a
+    -- flip, one try in two (the gamemode's in-game suite, 2026-11-09).
+    flipReserve = 0.2,   -- rad
     attKp      = 60,    -- attitude hold after a flip, 1/s^2
     attKd      = 14,    -- 1/s
     settle     = 0.15,  -- s before touchdown the spin should be finished
@@ -109,6 +117,7 @@ Bot.Config = {
     -- funbox's 0.85 s to hold it in, against the 0.3 s a pose must be held.
     poseFrom   = 0.08,
     poseClear  = 0.28,
+    poseClearMin = 0.15,  -- s: the latest a short flight lets go (Brain:airPose)
     grindHold  = 1.4,   -- s on a rail before hopping off it (a laid rail usually ends first)
 }
 
@@ -688,9 +697,12 @@ function Brain:flySpin(axis, sign, target, pose)
                 local att = select(2, BMX.Attitude(self.bike, UP))
                 local want = Bot.Config.landPitch
                 local cmd = (Bot.Config.attKp * (want - att) - Bot.Config.attKd * Ax.rate(st, self.bike)) / accel
-                local budget = spun - TAU - 0.03
+                local budget = spun - TAU - Bot.Config.flipReserve
                 if cmd * sign < 0 and budget <= 0 then
-                    cmd = sign * math.Clamp(-Bot.Config.spinGain * 2 * w / accel, -1, 0)
+                    -- Hold the spin's rate at zero, in EITHER direction: the clamp
+                    -- used to be braking only, so a reversal already under way
+                    -- when the budget ran out went on un-flipping the flip.
+                    cmd = sign * math.Clamp(-Bot.Config.spinGain * 2 * w / accel, -1, 1)
                 end
                 u = math.Clamp(cmd, -1, 1)
             elseif axis == "roll" then
@@ -698,9 +710,12 @@ function Brain:flySpin(axis, sign, target, pose)
                 -- landed rolled 40 degrees at 7.6 rad/s and fell over.
                 local roll = select(1, BMX.Attitude(self.bike, UP))
                 local cmd = (Bot.Config.attKp * (0 - roll) - Bot.Config.attKd * Ax.rate(st, self.bike)) / accel
-                local budget = spun - TAU - 0.03
+                local budget = spun - TAU - Bot.Config.flipReserve
                 if cmd * sign < 0 and budget <= 0 then
-                    cmd = sign * math.Clamp(-Bot.Config.spinGain * 2 * w / accel, -1, 0)
+                    -- Hold the spin's rate at zero, in EITHER direction: the clamp
+                    -- used to be braking only, so a reversal already under way
+                    -- when the budget ran out went on un-flipping the flip.
+                    cmd = sign * math.Clamp(-Bot.Config.spinGain * 2 * w / accel, -1, 1)
                 end
                 u = math.Clamp(cmd, -1, 1)
             else
@@ -733,6 +748,7 @@ function Bot.AirNeed(name, cfg)
     local Air = (cfg or BMX.Config).Air
     local accel = Air[AXES[A.axis].accel]
     local target = (TAU + Bot.Config.margin) * 1.04
+    if A.axis == "pitch" then target = target + Bot.Config.flipReserve end   -- as airPart aims
     if A.axis == "pitch" and A.sign < 0 then target = target + math.rad(25) end
     for t = 0.6, 2.5, 0.05 do
         if Bot.MaxSpin(Air, accel, t - Bot.Config.settle * 0.5) >= target then return t end
@@ -997,6 +1013,7 @@ function Brain:airPart(name, t0, pose, scored)
     -- Aim to finish on a turn plus margin; a frontflip leaves a nose-up ramp,
     -- so it turns that much further to come down level.
     local target = TAU + Bot.Config.margin
+    if A.axis == "pitch" then target = target + Bot.Config.flipReserve end
     if A.axis == "pitch" and A.sign < 0 then
         local p0 = select(2, BMX.Attitude(self.bike, UP))
         target = math.max(target, TAU + p0)
@@ -1132,7 +1149,16 @@ end
 -- Hold a pose through the middle of the air, and be out of it well before
 -- touchdown (landing in a pose bails).
 function Brain:airPose(name, pose, t0)
-    self:say(string.format("airborne: %.2f s to land, holding %s", self:timeToLand(), pose))
+    local tLand = self:timeToLand()
+    self:say(string.format("airborne: %.2f s to land, holding %s", tLand, pose))
+    -- LET GO AS LATE AS A SHORT FLIGHT NEEDS. A pose pays once held poseMinHold,
+    -- and poseFrom + poseClear take 0.36 s of the air: off a funbox landed on its own
+    -- deck (0.68 s, where 0.85 was expected) that left 0.32 s, and the pose missed
+    -- both tries (bot_superman, 2026-11-09). Let go later, never closer to the
+    -- wheels than poseClearMin.
+    local K = BMX.Config and BMX.Config.Tricks
+    local hold = ((K and K.poseMinHold) or 0.3) + 0.06
+    local clear = math.Clamp(tLand - Bot.Config.poseFrom - hold, Bot.Config.poseClearMin, Bot.Config.poseClear)
     local landedFor = 0
     while true do
         if not self:riding() then return false end
@@ -1144,7 +1170,7 @@ function Brain:airPose(name, pose, t0)
             landedFor = 0
         end
         local inp = {}
-        if st.airMode and (st.airTime or 0) >= Bot.Config.poseFrom and self:timeToLand() > Bot.Config.poseClear then inp.pose = pose end
+        if st.airMode and (st.airTime or 0) >= Bot.Config.poseFrom and self:timeToLand() > clear then inp.pose = pose end
         self:set(inp)
         tick()
     end

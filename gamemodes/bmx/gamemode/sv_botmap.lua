@@ -634,13 +634,28 @@ end
 M.Pick = pick
 
 -- A face that gives `need` s of air, or nil.
+-- IS IT STILL THERE? The scan catalogues props as well as the map, and nothing
+-- takes a face out when its prop goes: the bot's own kickers, removed after each
+-- trick, stayed in the catalogue as ramps, and a superman was ridden at the flat
+-- ground where one had stood (hopped off at 3-6 degrees, then nothing scored;
+-- bot_superman, 2026-11-09). One trace down the middle of the face: the ground
+-- must be there, at the face's height and slope.
+function M.FaceStands(f)
+    if not (f and f.foot and f.lip) then return false end
+    local mid = (f.foot + f.lip) * 0.5
+    local z, n = M.Ground(mid.x, mid.y, mid.z + 40, mid.z - 40)
+    if not z or abs(z - mid.z) > 12 then return false end
+    local slope = math.acos(math.Clamp(n.z, -1, 1))
+    return abs(slope - (f.angle or slope)) <= math.rad(6)
+end
+
 function Brain:mapFace(need)
     local cat = self:mapCat()
     if not cat then return nil end
     local good = {}
     for _, f in ipairs(cat.faces) do
         local s = M.Stat(f.key)
-        if M.FaceAir(f) >= need and s.missed <= s.landed + 1 then good[#good + 1] = f end
+        if M.FaceAir(f) >= need and s.missed <= s.landed + 1 and M.FaceStands(f) then good[#good + 1] = f end
     end
     local f = pick(self, good, function(it) return it.height + it.deck * 0.1 end,
         function(it) return it.foot - it.dir * 300 end)
