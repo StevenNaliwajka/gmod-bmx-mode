@@ -99,7 +99,9 @@ Bot.Config = {
     -- 1.35 a backflip on the live park came down 8 degrees short: the ground
     -- it landed on was higher than predicted, so the touchdown came early.
     ahead      = 1.6,   -- how far ahead of an on-time spin to run
-    brakeShare = 1.0,   -- of an axis's full braking the pacing counts on
+    brakeShare = 0.7,   -- of an axis's full braking the pacing counts on: the rate loop (spinGain) lags
+                        -- the braking curve by ~1.7 rad/s, and at 1.0 a backflip off a 14 deg plate
+                        -- turned 392-426 and came down at pitch 60-70, tipping 3 tries in 8 (10/10 at 0.7)
     landRate   = 4,     -- rad/s of spin a landing on the wheels can soak
     attempts   = 3,     -- per trick, before the bot gives up on it
     -- STUCK: busy (a trick running, or off the bike) yet within stuckMove of
