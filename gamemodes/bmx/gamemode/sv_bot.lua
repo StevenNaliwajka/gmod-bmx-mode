@@ -1160,7 +1160,11 @@ function Brain:airPose(name, pose, t0)
     -- wheels than poseClearMin.
     local K = BMX.Config and BMX.Config.Tricks
     local hold = ((K and K.poseMinHold) or 0.3) + 0.06
-    local clear = math.Clamp(tLand - Bot.Config.poseFrom - hold, Bot.Config.poseClearMin, Bot.Config.poseClear)
+    -- Planned when the pose goes up, not at the lip: air mode engages a few ticks after
+    -- the wheels leave, and planned from the lip the pose came up 0.14 s late and was
+    -- let go after exactly poseMinHold -- a tick short of paying, every try off a map's
+    -- funbox (bot_superman, 2026-11-10: held 0.30 s, nothing scored, 5 runs in 6).
+    local clear
     local landedFor = 0
     while true do
         if not self:riding() then return false end
@@ -1172,7 +1176,10 @@ function Brain:airPose(name, pose, t0)
             landedFor = 0
         end
         local inp = {}
-        if st.airMode and (st.airTime or 0) >= Bot.Config.poseFrom and self:timeToLand() > clear then inp.pose = pose end
+        if st.airMode and (st.airTime or 0) >= Bot.Config.poseFrom then
+            clear = clear or math.Clamp(self:timeToLand() - hold, Bot.Config.poseClearMin, Bot.Config.poseClear)
+            if self:timeToLand() > clear then inp.pose = pose end
+        end
         self:set(inp)
         tick()
     end
