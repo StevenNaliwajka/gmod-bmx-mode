@@ -1832,7 +1832,8 @@ function Brain:watchStuck()
         self.outSince = nil
     end
     if self.escape then return end
-    local busy = self.job ~= nil or not self:riding()
+    -- Planning (waiting for the map's scan, Brain:mapCat) is not being stuck.
+    local busy = (self.job ~= nil and not self.planning) or not self:riding()
     -- Turning round on the spot is progress too: lining up for a run at
     -- walking pace took over 4 s and counted as stuck.
     local yaw = self.bike:GetAngles().y

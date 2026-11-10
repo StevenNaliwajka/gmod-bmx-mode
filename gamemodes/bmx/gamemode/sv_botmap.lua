@@ -549,12 +549,25 @@ hook.Add("Think", "BMX.BotMap.Scan", function()
     end
 end)
 
+-- WAITING FOR THE SCAN IS NOT BEING STUCK. The map's scan takes tens of seconds
+-- after a map loads (or the park changes), and a trick asked for in that time waits
+-- here with the bike standing still -- which the stuck watch (Brain:watchStuck) read
+-- as no progress and cancelled at 4 s: every air trick and grind on a fresh server
+-- missed "stuck" (the gamemode's in-game suite, 2026-11-09). So while it waits the
+-- brain says it is planning, and the keys are let go. NOT THE BRAKE: held at a
+-- standstill the brake walks the bike backwards (the escape's "back up"), and on
+-- flatgrass it reversed 500 u and off the edge of the world while it waited.
 function Brain:mapCat(wait)
     local t0 = CurTime()
     local cat = M.Get()
-    while not cat and coroutine.running() and CurTime() - t0 < (wait or 30) do
-        tick()
-        cat = M.Get()
+    if not cat and coroutine.running() then
+        self.planning = true
+        if self:riding() then self:set({}) end
+        while not cat and CurTime() - t0 < (wait or 30) do
+            tick()
+            cat = M.Get()
+        end
+        self.planning = nil
     end
     return cat
 end
@@ -672,6 +685,20 @@ function Brain:launch()
     if not l or l.plates then return l end
     if not M.OnFallLine(l) then
         self:say("that launch is a corner, ridden across: not taking it")
+        -- A corner it will not take is not "nowhere to get air". The catalogues are
+        -- the map as it was scanned: look round with its own eyes (the original
+        -- launch: traces from here, which see a ramp put down since) and, where it
+        -- may, put its own kicker down (tailwhip_lands and bot_finds_a_ramp_in_the_world
+        -- on flatgrass, whose only catalogued launches are corners, 2026-11-09).
+        local base = (Brain.navOrig and Brain.navOrig.launch) or O.launch
+        local k = base(self)
+        if k and (k.plates or M.OnFallLine(k)) then return k end
+        if self.allowSpawnRamp and self.allowFindRamp then
+            self.allowFindRamp = false
+            k = base(self)
+            self.allowFindRamp = true
+            if k then return k end
+        end
         return nil
     end
     return l
